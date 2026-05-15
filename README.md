@@ -102,6 +102,31 @@ Use the council for **high-stakes decisions** where single-model bias has real c
 
 Do **not** use the council for trivial coding or routine questions — the latency and cost are not justified, and consensus on simple questions adds no signal.
 
+## Known limitations
+
+### Langfuse session linkage (best-effort)
+
+Each council run generates 7 HTTP calls (3 Stage 1 + 3 Stage 2 + 1 Stage 3 Chairman).
+The client attempts to group them into a single Langfuse session by passing
+`metadata.langfuse_session_id` in the OpenRouter request body (the documented
+Langfuse SDK convention).
+
+**However**: empirical testing on 2026-05-15 across 7 different propagation
+patterns (body field variants `langfuse_session_id` / `session_id` / `sessionId`,
+plus HTTP headers `X-Langfuse-Session-Id` / `langfuse-session-id`) showed
+**inconsistent server-side mapping** by the OpenRouter → Langfuse plugin for
+raw HTTP gateways. Session linkage is therefore **best-effort, not guaranteed**.
+
+**Authoritative correlation channel**: the client-side observability module
+(`council/observability.py`) emits a structured JSON line on **stderr** for every
+API call, including a per-run `trace_id` that uniquely groups the 7 calls of
+a single council run. Grep for `trace_id` in application logs to definitively
+correlate calls regardless of Langfuse-side session mapping.
+
+**Future direction**: when self-hosted Langfuse is operational (e.g. via
+`langfuse-devops-lab`), the session linkage will be re-implemented as a direct
+Langfuse SDK side-channel, bypassing the OpenRouter plugin mapping ambiguity.
+
 ## License
 
 Personal/experimental use.

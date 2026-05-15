@@ -31,3 +31,11 @@ Anthropic models are intentionally excluded from both voter and chairman roles (
 ### Tested
 - 33 unit tests (input validation, env loading, API key format, RANK regex parsing, HTTP error handling with mocked `urlopen`)
 - 3 end-to-end runs on real OpenRouter against live models with diverse query types (technical, career-decision, daily-driver choice)
+
+### Known limitations
+- **Langfuse session linkage is best-effort**: the client passes `metadata.langfuse_session_id`
+  in the OpenRouter request body, but empirical testing (7 patterns) showed inconsistent
+  server-side mapping by the OpenRouter → Langfuse plugin for raw HTTP gateways.
+  Authoritative correlation for grouping the 7 calls of a single council run is the
+  client-side `trace_id` emitted on stderr by `council/observability.py`.
+  See README for details and future direction.
