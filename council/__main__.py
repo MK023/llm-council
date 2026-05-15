@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     print("STAGE 1 — independent responses (authors anonymized)")
     print("=" * 72)
     try:
-        s1 = stage1_responses(client, question)
+        s1 = stage1_responses(client, question, session_id=trace.trace_id)
     except OpenRouterError as exc:
         emit("stage1_failed", trace, error=str(exc), request_id=exc.request_id)
         print(f"STAGE 1 FAILED: {exc}", file=sys.stderr)
@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     print("STAGE 2 — peer rankings (blind, regex-validated)")
     print("=" * 72)
     try:
-        s2 = stage2_rankings(client, question, s1)
+        s2 = stage2_rankings(client, question, s1, session_id=trace.trace_id)
     except OpenRouterError as exc:
         emit("stage2_failed", trace, error=str(exc), request_id=exc.request_id)
         print(f"STAGE 2 FAILED: {exc}", file=sys.stderr)
@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     print("STAGE 3 — chairman synthesis (external to voter pool)")
     print("=" * 72)
     try:
-        s3 = stage3_synthesis(client, question, s1, s2)
+        s3 = stage3_synthesis(client, question, s1, s2, session_id=trace.trace_id)
     except OpenRouterError as exc:
         emit("stage3_failed", trace, error=str(exc), request_id=exc.request_id)
         print(f"STAGE 3 FAILED: {exc}", file=sys.stderr)

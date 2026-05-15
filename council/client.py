@@ -64,14 +64,22 @@ class OpenRouterClient:
         messages: list[dict[str, str]],
         max_tokens: int,
         temperature: float = TEMPERATURE,
+        metadata: dict[str, Any] | None = None,
     ) -> CallResult:
-        """Sends a chat completion request, retrying on transient errors only."""
-        payload = {
+        """Sends a chat completion request, retrying on transient errors only.
+
+        Optional `metadata` is forwarded inside the JSON body's `metadata` field;
+        OpenRouter's Langfuse plugin reads `langfuse_session_id`, `langfuse_user_id`,
+        and `langfuse_tags` from there to group traces into a single session.
+        """
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if metadata:
+            payload["metadata"] = metadata
         start = time.perf_counter()
         last_error: Exception | None = None
 
