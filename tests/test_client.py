@@ -1,4 +1,5 @@
 """Unit tests for OpenRouter client error handling (network transport mocked)."""
+
 from __future__ import annotations
 
 import io
@@ -44,7 +45,9 @@ class TestRetryLogic(unittest.TestCase):
 
     @patch("council.client.time.sleep")
     @patch("council.client.urllib.request.urlopen")
-    def test_429_retries_then_succeeds(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+    def test_429_retries_then_succeeds(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
         mock_urlopen.side_effect = [_http_error(429), _mock_response(_OK_BODY)]
         result = self.client.call("test/model", self.messages, max_tokens=10)
         self.assertEqual(result.content, "ok")
@@ -53,7 +56,9 @@ class TestRetryLogic(unittest.TestCase):
 
     @patch("council.client.time.sleep")
     @patch("council.client.urllib.request.urlopen")
-    def test_503_retries_then_succeeds(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+    def test_503_retries_then_succeeds(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
         mock_urlopen.side_effect = [_http_error(503), _mock_response(_OK_BODY)]
         result = self.client.call("test/model", self.messages, max_tokens=10)
         self.assertEqual(result.attempts, 2)
@@ -80,7 +85,9 @@ class TestRetryLogic(unittest.TestCase):
 
     @patch("council.client.time.sleep")
     @patch("council.client.urllib.request.urlopen")
-    def test_urlerror_retries_until_max(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+    def test_urlerror_retries_until_max(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
         """Connection error retries up to MAX_RETRIES, then raises."""
         mock_urlopen.side_effect = urllib.error.URLError("connection refused")
         with self.assertRaises(OpenRouterError) as ctx:
@@ -98,7 +105,9 @@ class TestResponseValidation(unittest.TestCase):
 
     @patch("council.client.time.sleep")
     @patch("council.client.urllib.request.urlopen")
-    def test_missing_choices_array_fails(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+    def test_missing_choices_array_fails(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
         mock_urlopen.return_value = _mock_response({"usage": {}})
         with self.assertRaises(OpenRouterError) as ctx:
             self.client.call("test/model", self.messages, max_tokens=10)
@@ -127,7 +136,9 @@ class TestEdgeCases(unittest.TestCase):
 
     @patch("council.client.time.sleep")
     @patch("council.client.urllib.request.urlopen")
-    def test_null_cost_defaults_to_zero(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+    def test_null_cost_defaults_to_zero(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
         """A response with cost=None must not propagate TypeError."""
         body = {
             "choices": [{"message": {"content": "ok"}}],
@@ -151,7 +162,9 @@ class TestEdgeCases(unittest.TestCase):
 
     @patch("council.client.time.sleep")
     @patch("council.client.urllib.request.urlopen")
-    def test_missing_request_id_is_none(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+    def test_missing_request_id_is_none(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
         mock_urlopen.return_value = _mock_response(_OK_BODY, headers={})
         client = OpenRouterClient("sk-or-v1-test")
         result = client.call("test/model", [{"role": "user", "content": "x"}], max_tokens=10)

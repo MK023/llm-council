@@ -1,4 +1,5 @@
 """Three-stage council protocol: respond -> peer rank (blind) -> chairman synthesis."""
+
 from __future__ import annotations
 
 import re
@@ -51,9 +52,7 @@ class RankingResult:
     error: str | None = None  # Populated if the voter failed at the API level
 
 
-def stage1_responses(
-    client: OpenRouterClient, question: str
-) -> list[StageResult]:
+def stage1_responses(client: OpenRouterClient, question: str) -> list[StageResult]:
     """Each voter answers the question independently; per-voter failures degrade gracefully."""
     messages = [{"role": "user", "content": question}]
     results: list[StageResult] = []

@@ -1,4 +1,5 @@
 """CLI entry point: `python -m council "your question"`."""
+
 from __future__ import annotations
 
 import argparse
@@ -61,8 +62,12 @@ def validate_question(question: str) -> str:
 def _check_token_ceiling(running_total: int, trace: TraceContext) -> None:
     """Raises RuntimeError if cumulative tokens exceed per-run ceiling (defense against runaway)."""
     if running_total > MAX_TOTAL_TOKENS_PER_RUN:
-        emit("token_ceiling_exceeded", trace, running_total=running_total,
-             ceiling=MAX_TOTAL_TOKENS_PER_RUN)
+        emit(
+            "token_ceiling_exceeded",
+            trace,
+            running_total=running_total,
+            ceiling=MAX_TOTAL_TOKENS_PER_RUN,
+        )
         raise RuntimeError(
             f"Cumulative tokens {running_total} exceeded per-run ceiling "
             f"{MAX_TOTAL_TOKENS_PER_RUN} — aborting to protect spend cap"
@@ -109,10 +114,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     for i, s in enumerate(s1):
         running_tokens += s.result.tokens
-        emit("stage1_response", trace, voter_label=chr(65 + i), model=s.model,
-             cost=s.result.cost, tokens=s.result.tokens,
-             latency_s=s.result.latency_s, attempts=s.result.attempts,
-             request_id=s.result.request_id, error=s.error)
+        emit(
+            "stage1_response",
+            trace,
+            voter_label=chr(65 + i),
+            model=s.model,
+            cost=s.result.cost,
+            tokens=s.result.tokens,
+            latency_s=s.result.latency_s,
+            attempts=s.result.attempts,
+            request_id=s.result.request_id,
+            error=s.error,
+        )
         status = "FAILED" if s.error else "OK"
         print(f"\n--- Response {chr(65 + i)} [{status}] ({s.model}) ---")
         if s.error:
@@ -148,11 +161,19 @@ def main(argv: list[str] | None = None) -> int:
             status = "MALFORMED"
         else:
             status = "OK"
-        emit("stage2_ranking", trace, voter_label=f"V{i + 1}", voter_model=r.voter,
-             is_valid=r.is_valid, rank=list(r.rank) if r.rank else None,
-             cost=r.result.cost, tokens=r.result.tokens,
-             latency_s=r.result.latency_s, request_id=r.result.request_id,
-             error=r.error)
+        emit(
+            "stage2_ranking",
+            trace,
+            voter_label=f"V{i + 1}",
+            voter_model=r.voter,
+            is_valid=r.is_valid,
+            rank=list(r.rank) if r.rank else None,
+            cost=r.result.cost,
+            tokens=r.result.tokens,
+            latency_s=r.result.latency_s,
+            request_id=r.result.request_id,
+            error=r.error,
+        )
         print(f"\n--- Voter {i + 1} [{status}] ({r.voter}) ---")
         if r.error and "regex_no_match" not in r.error:
             print(f"ERROR: {r.error}")
@@ -161,10 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             if r.is_valid and r.rank:
                 reason_text = r.reason if r.reason else "(empty — accepted by relaxed regex)"
                 print(f"PARSED RANK: {' > '.join(r.rank)}  |  REASON: {reason_text}")
-        print(
-            f"[tok={r.result.tokens} cost=${r.result.cost:.6f} "
-            f"lat={r.result.latency_s}s]"
-        )
+        print(f"[tok={r.result.tokens} cost=${r.result.cost:.6f} lat={r.result.latency_s}s]")
 
     try:
         _check_token_ceiling(running_tokens, trace)
@@ -182,16 +200,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"STAGE 3 FAILED: {exc}", file=sys.stderr)
         return 1
     running_tokens += s3.tokens
-    emit("stage3_synthesis", trace, cost=s3.cost, tokens=s3.tokens,
-         latency_s=s3.latency_s, attempts=s3.attempts, request_id=s3.request_id)
+    emit(
+        "stage3_synthesis",
+        trace,
+        cost=s3.cost,
+        tokens=s3.tokens,
+        latency_s=s3.latency_s,
+        attempts=s3.attempts,
+        request_id=s3.request_id,
+    )
     print(f"\n{s3.content}")
     print(f"\n[tok={s3.tokens} cost=${s3.cost:.6f} lat={s3.latency_s}s]")
 
     total_cost = sum(s.result.cost for s in s1) + sum(r.result.cost for r in s2) + s3.cost
     total_latency = (
-        sum(s.result.latency_s for s in s1)
-        + sum(r.result.latency_s for r in s2)
-        + s3.latency_s
+        sum(s.result.latency_s for s in s1) + sum(r.result.latency_s for r in s2) + s3.latency_s
     )
     stage1_failed = [(chr(65 + i), s.model, s.error) for i, s in enumerate(s1) if s.error]
     stage2_failed = [
@@ -205,11 +228,16 @@ def main(argv: list[str] | None = None) -> int:
         if not r.is_valid and (r.error and "regex_no_match" in r.error)
     ]
 
-    emit("query_complete", trace, total_cost=total_cost, total_tokens=running_tokens,
-         total_latency_s=round(total_latency, 2),
-         stage1_failed_count=len(stage1_failed),
-         stage2_failed_count=len(stage2_failed),
-         stage2_malformed_count=len(stage2_malformed))
+    emit(
+        "query_complete",
+        trace,
+        total_cost=total_cost,
+        total_tokens=running_tokens,
+        total_latency_s=round(total_latency, 2),
+        stage1_failed_count=len(stage1_failed),
+        stage2_failed_count=len(stage2_failed),
+        stage2_malformed_count=len(stage2_malformed),
+    )
 
     if stage1_failed or stage2_failed or stage2_malformed:
         print("\n" + "=" * 72)

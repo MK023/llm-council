@@ -1,4 +1,5 @@
 """Configuration constants and prompt templates for the council protocol."""
+
 from __future__ import annotations
 
 from typing import Final
@@ -68,9 +69,7 @@ def _label_responses(responses: list[str]) -> str:
     fenced = []
     for i, r in enumerate(responses):
         label = chr(65 + i)
-        fenced.append(
-            f"{_FENCE_OPEN.format(label=label)}\n{r}\n{_FENCE_CLOSE.format(label=label)}"
-        )
+        fenced.append(f"{_FENCE_OPEN.format(label=label)}\n{r}\n{_FENCE_CLOSE.format(label=label)}")
     return "\n\n".join(fenced)
 
 
@@ -92,12 +91,8 @@ def stage2_prompt(question: str, responses: list[str]) -> str:
     )
 
 
-def stage3_prompt(
-    question: str, responses: list[str], rankings: list[str]
-) -> str:
-    rank_text = "\n".join(
-        f"Voter {i + 1}: {r}" for i, r in enumerate(rankings)
-    )
+def stage3_prompt(question: str, responses: list[str], rankings: list[str]) -> str:
+    rank_text = "\n".join(f"Voter {i + 1}: {r}" for i, r in enumerate(rankings))
     return (
         f"Question: {question}\n\n"
         f"Three independent responses:\n\n{_label_responses(responses)}\n\n"

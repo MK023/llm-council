@@ -1,4 +1,5 @@
 """OpenRouter HTTP client with retry, schema validation, and structured results."""
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,9 @@ from council.config import (
 class OpenRouterError(Exception):
     """Raised when the OpenRouter API returns an unrecoverable error."""
 
-    def __init__(self, message: str, status_code: int | None = None, request_id: str | None = None) -> None:
+    def __init__(
+        self, message: str, status_code: int | None = None, request_id: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.request_id = request_id
@@ -53,7 +56,7 @@ class OpenRouterClient:
 
     def __repr__(self) -> str:
         # Defense against accidental debug print leaking the key
-        return f"OpenRouterClient(api_key='sk-or-***REDACTED***')"
+        return "OpenRouterClient(api_key='sk-or-***REDACTED***')"
 
     def call(
         self,
@@ -100,9 +103,7 @@ class OpenRouterClient:
             # it is a semantic API error, not a transient transport failure
 
             if attempt < MAX_RETRIES:
-                backoff = RETRY_BACKOFF_SECONDS[
-                    min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)
-                ]
+                backoff = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
                 time.sleep(backoff)
 
         raise OpenRouterError(
@@ -123,7 +124,9 @@ class OpenRouterClient:
             },
         )
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-            request_id = resp.headers.get("x-request-id") or resp.headers.get("openrouter-request-id")
+            request_id = resp.headers.get("x-request-id") or resp.headers.get(
+                "openrouter-request-id"
+            )
             raw = resp.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 raise OpenRouterError(

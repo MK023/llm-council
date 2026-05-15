@@ -5,6 +5,7 @@ Opt-in backend: if `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set in env,
 emit trace + span events as structured log records that a Langfuse forwarder
 (or the OpenRouter Langfuse plugin) can consume.
 """
+
 from __future__ import annotations
 
 import json
