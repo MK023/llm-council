@@ -1,5 +1,7 @@
 # llm-council
 
+[![CI](https://github.com/MK023/llm-council/actions/workflows/ci.yml/badge.svg)](https://github.com/MK023/llm-council/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![stdlib only](https://img.shields.io/badge/dependencies-none-brightgreen)
+
 Multi-model anti-sycophancy verification council using OpenRouter as gateway.  
 3 independent voters → blind peer ranking → external chairman synthesis.
 
@@ -129,4 +131,4 @@ Langfuse SDK side-channel, bypassing the OpenRouter plugin mapping ambiguity.
 
 ## License
 
-Personal/experimental use.
+MIT — see [LICENSE](LICENSE).
