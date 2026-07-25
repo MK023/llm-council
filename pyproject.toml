@@ -55,10 +55,9 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-# 58% globale contro un valore attuale del 60% (con branch coverage attiva): un
-# pavimento con due punti di margine. A 60 esatti il gate scatterebbe alla prima riga
-# non coperta, e un gate che si rompe subito è un gate che qualcuno disattiva.
-# Il buco dichiarato è __main__.py al 21% — orchestrazione CLI, prossimo debito.
-# I moduli critici hanno una soglia separata e più alta, applicata in CI.
-fail_under = 58
+# 90% globale contro un 94% reale: quattro punti di margine. Alzata dal 58% del
+# 2026-07-26 quando __main__.py e' passato dal 21% al 91% — il debito dichiarato in
+# quella nota e' stato saldato lo stesso giorno, ed era l'ultimo buco grosso.
+# Resta un pavimento, non un obiettivo: la qualita' la misura il mutation testing.
+fail_under = 90
 exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]

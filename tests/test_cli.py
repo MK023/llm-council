@@ -1,0 +1,232 @@
+"""Unit tests for CLI orchestration: exit contracts, config errors, degraded runs.
+
+`__main__.py` sat at 21% because it is the awkward layer — argv, stdout, env,
+process exit codes. But it is also where a caller learns whether the run worked:
+the exit code IS the contract. A council that quietly returns 0 after losing two
+voters is worse than one that fails loudly.
+
+Network is never touched: the three stages are patched at the boundary.
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+import os
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest.mock import patch
+
+from council.__main__ import load_env, main, parse_args
+from council.client import CallResult, OpenRouterError
+from council.config import MAX_QUESTION_LENGTH, MAX_TOTAL_TOKENS_PER_RUN, VOTER_MODELS
+from council.stages import RankingResult, StageResult
+
+_KEY = "sk-or-v1-test-key-not-real"
+
+
+def setUpModule() -> None:
+    """Silence structured telemetry during tests.
+
+    `emit` binds its StreamHandler to sys.stderr at import time, so redirect_stderr
+    (which swaps the stream later) cannot capture it — the JSON would land on the
+    real terminal and drown the test output.
+    """
+    logging.disable(logging.CRITICAL)
+
+
+def tearDownModule() -> None:
+    logging.disable(logging.NOTSET)
+
+
+def _ok(content: str = "risposta", tokens: int = 100) -> CallResult:
+    return CallResult(
+        content=content, cost=0.001, tokens=tokens, latency_s=1.0, attempts=1, request_id="req"
+    )
+
+
+def _stage1(errors: tuple[str | None, ...] = (None, None, None), tokens: int = 100):
+    return [
+        StageResult(
+            model=m,
+            result=_ok(tokens=tokens) if e is None else _ok("[VOTER_FAILED]", 0),
+            error=e,
+        )
+        for m, e in zip(VOTER_MODELS, errors, strict=True)
+    ]
+
+
+def _stage2(valid: tuple[bool, ...] = (True, True, True)):
+    return [
+        RankingResult(
+            voter=m,
+            result=_ok("RANK: A,B,C"),
+            rank=("A", "B", "C") if v else None,
+            reason="perche' si" if v else "",
+            is_valid=v,
+            error=None if v else "regex_no_match (Stage 2 output did not match RANK regex)",
+        )
+        for m, v in zip(VOTER_MODELS, valid, strict=True)
+    ]
+
+
+def _run(argv: list[str], **patches) -> tuple[int, str, str]:
+    """Runs main() with the three stages patched, capturing stdout/stderr."""
+    defaults = {
+        "stage1_responses": _stage1(),
+        "stage2_rankings": _stage2(),
+        "stage3_synthesis": _ok("sintesi finale"),
+    }
+    defaults.update(patches)
+    out, err = io.StringIO(), io.StringIO()
+    with (
+        patch("council.__main__.stage1_responses", **_as_mock(defaults["stage1_responses"])),
+        patch("council.__main__.stage2_rankings", **_as_mock(defaults["stage2_rankings"])),
+        patch("council.__main__.stage3_synthesis", **_as_mock(defaults["stage3_synthesis"])),
+        redirect_stdout(out),
+        redirect_stderr(err),
+    ):
+        code = main(argv)
+    return code, out.getvalue(), err.getvalue()
+
+
+def _as_mock(value: object) -> dict[str, object]:
+    """Exceptions become side_effect, everything else return_value."""
+    if isinstance(value, Exception):
+        return {"side_effect": value}
+    return {"return_value": value}
+
+
+class TestInputContract(unittest.TestCase):
+    """Bad input must exit 2 and say so on stderr — never start a paid run."""
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_empty_question_exits_2(self) -> None:
+        code, _, err = _run(["   "])
+        self.assertEqual(code, 2)
+        self.assertIn("INPUT ERROR", err)
+
+    def test_oversized_question_exits_2(self) -> None:
+        code, _, err = _run(["x" * (MAX_QUESTION_LENGTH + 1)])
+        self.assertEqual(code, 2)
+        self.assertIn("INPUT ERROR", err)
+
+    def test_question_at_the_cap_is_accepted(self) -> None:
+        code, _, _ = _run(["x" * MAX_QUESTION_LENGTH])
+        self.assertEqual(code, 0)
+
+
+class TestConfigContract(unittest.TestCase):
+    """A missing or malformed key must fail before any network call, with exit 2."""
+
+    def test_missing_api_key_exits_2(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            code, _, err = _run(["domanda"])
+        self.assertEqual(code, 2)
+        self.assertIn("OPENROUTER_API_KEY not set", err)
+
+    def test_malformed_api_key_exits_2(self) -> None:
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-wrong-prefix"}, clear=True):
+            code, _, err = _run(["domanda"])
+        self.assertEqual(code, 2)
+        self.assertIn("API KEY ERROR", err)
+
+    def test_key_is_never_echoed_to_output(self) -> None:
+        """A key printed in a log or a screenshot is a leaked key."""
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=True):
+            _, out, err = _run(["domanda"])
+        self.assertNotIn(_KEY, out)
+        self.assertNotIn(_KEY, err)
+
+
+class TestExitContract(unittest.TestCase):
+    """The exit code is the contract: full success, degraded, stage failure, abort."""
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_clean_run_exits_0(self) -> None:
+        code, out, _ = _run(["domanda"])
+        self.assertEqual(code, 0)
+        self.assertIn("sintesi finale", out)
+
+    def test_failed_voter_degrades_to_exit_3_not_0(self) -> None:
+        """Two voters out of three is a usable answer — but the caller must know."""
+        code, out, _ = _run(["domanda"], stage1_responses=_stage1((None, "model refused", None)))
+        self.assertEqual(code, 3)
+        self.assertIn("sintesi finale", out)  # la risposta c'e' comunque
+
+    def test_malformed_ranking_also_degrades_to_3(self) -> None:
+        code, _, _ = _run(["domanda"], stage2_rankings=_stage2((True, False, True)))
+        self.assertEqual(code, 3)
+
+    def test_stage1_total_failure_exits_1(self) -> None:
+        code, _, err = _run(["domanda"], stage1_responses=OpenRouterError("all voters down"))
+        self.assertEqual(code, 1)
+        self.assertIn("STAGE 1 FAILED", err)
+
+    def test_stage3_failure_exits_1(self) -> None:
+        code, _, err = _run(["domanda"], stage3_synthesis=OpenRouterError("chairman down"))
+        self.assertEqual(code, 1)
+        self.assertIn("STAGE 3", err)
+
+    def test_token_ceiling_aborts_with_exit_4(self) -> None:
+        """Runaway protection: abort beats burning the spend cap."""
+        huge = MAX_TOTAL_TOKENS_PER_RUN  # x3 voters blows past the ceiling
+        code, _, err = _run(["domanda"], stage1_responses=_stage1(tokens=huge))
+        self.assertEqual(code, 4)
+        self.assertIn("ABORT", err)
+
+
+class TestArgParsing(unittest.TestCase):
+    def test_question_is_positional(self) -> None:
+        self.assertEqual(parse_args(["la mia domanda"]).question, "la mia domanda")
+
+    def test_env_path_defaults_to_cwd(self) -> None:
+        self.assertEqual(parse_args(["q"]).env, Path.cwd() / ".env")
+
+    def test_env_path_is_overridable(self) -> None:
+        self.assertEqual(parse_args(["q", "--env", "/tmp/x.env"]).env, Path("/tmp/x.env"))
+
+
+class TestEnvLoading(unittest.TestCase):
+    def test_missing_file_is_not_an_error(self) -> None:
+        load_env(Path("/nonexistent/.env"))  # must not raise
+
+    def test_values_are_read_from_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text("SOME_TEST_KEY=abc123\n# commento\n\nMALFORMED_LINE\n")
+            with patch.dict(os.environ, {}, clear=True):
+                load_env(p)
+                self.assertEqual(os.environ["SOME_TEST_KEY"], "abc123")
+                self.assertNotIn("MALFORMED_LINE", os.environ)
+
+    def test_environment_wins_over_file(self) -> None:
+        """Doppler injects the key as an env var: the file must never override it."""
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text("SOME_TEST_KEY=from-file\n")
+            with patch.dict(os.environ, {"SOME_TEST_KEY": "from-env"}, clear=True):
+                load_env(p)
+                self.assertEqual(os.environ["SOME_TEST_KEY"], "from-env")
+
+    def test_value_containing_equals_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text("SOME_TEST_KEY=a=b=c\n")
+            with patch.dict(os.environ, {}, clear=True):
+                load_env(p)
+                self.assertEqual(os.environ["SOME_TEST_KEY"], "a=b=c")
+
+
+if __name__ == "__main__":
+    unittest.main()
