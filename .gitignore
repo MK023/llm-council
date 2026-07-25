@@ -11,3 +11,6 @@ htmlcov/
 venv/
 .DS_Store
 legacy/
+
+# Artefatti di coverage: generati in locale e in CI, mai committati
+coverage.xml
