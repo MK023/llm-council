@@ -16,7 +16,7 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from council.client import OpenRouterClient
+from council.client import OpenRouterClient, OpenRouterError
 from council.config import (
     CHAIRMAN_MODEL,
     PROVIDER_ROUTING,
@@ -132,6 +132,98 @@ class TestJuryComposition(unittest.TestCase):
         """Whoever orchestrates the council does not sit in it."""
         for model in (*VOTER_MODELS, CHAIRMAN_MODEL):
             self.assertNotEqual(_house(model), "anthropic")
+
+
+class TestReasoningModelDiagnosis(unittest.TestCase):
+    """An empty answer must say WHY it is empty.
+
+    A reasoning model that runs out of budget returns HTTP 200 with empty content,
+    a populated `reasoning` field and finish_reason='length'. The old error message
+    said "no string 'content'" — the symptom, not the cause — and that ambiguity cost
+    this project two model swaps chasing an imaginary Italian-language weakness.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    def _call_expecting_error(self, body: dict[str, Any]) -> str:
+        with patch("council.client.urllib.request.urlopen") as mock_urlopen:
+            mock_urlopen.return_value = _mock_response(body)
+            with self.assertRaises(OpenRouterError) as ctx:
+                self.client.call("test/model", self.messages, max_tokens=10)
+        return str(ctx.exception)
+
+    def test_exhausted_reasoning_is_named_not_guessed(self) -> None:
+        msg = self._call_expecting_error(
+            {
+                "choices": [
+                    {
+                        "message": {"content": "", "reasoning": "Let me think about this..."},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
+        )
+        self.assertIn("Reasoning model exhausted max_tokens", msg)
+        self.assertIn("max_tokens", msg)
+
+    def test_empty_string_content_is_not_a_valid_answer(self) -> None:
+        """A blank voter is not a voter: whitespace must fail like a missing field."""
+        msg = self._call_expecting_error(
+            {"choices": [{"message": {"content": "   \n  "}, "finish_reason": "stop"}]}
+        )
+        self.assertIn("no usable", msg)
+
+    def test_refusal_still_takes_precedence(self) -> None:
+        msg = self._call_expecting_error(
+            {
+                "choices": [
+                    {
+                        "message": {"content": None, "refusal": "I cannot help with that"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+        self.assertIn("Model refused", msg)
+
+    def test_empty_without_reasoning_is_not_blamed_on_reasoning(self) -> None:
+        """Do not diagnose what is not there — the wrong cause is worse than none."""
+        msg = self._call_expecting_error(
+            {"choices": [{"message": {"content": None}, "finish_reason": "stop"}]}
+        )
+        self.assertNotIn("Reasoning model", msg)
+        self.assertIn("no usable", msg)
+
+
+class TestNoReasoningModelOnTheChair(unittest.TestCase):
+    """Guard for the rule written in config.py: the chairman must be reliable.
+
+    Kept as an explicit deny-list because no field in the model id marks a reasoning
+    model — it is discovered by running. Adding a name here after a real failure is
+    the point: the list is a record of what we measured, not a prediction.
+    """
+
+    KNOWN_REASONING_MODELS = frozenset(
+        {
+            "qwen/qwen3.6-35b-a3b",
+            "qwen/qwen3.5-9b",
+            "qwen/qwen3.5-27b",
+            "qwen/qwen3.5-122b-a10b",
+            "qwen/qwen3-235b-a22b-thinking-2507",
+            "deepseek/deepseek-r1-0528",
+            "moonshotai/kimi-k3",
+            "deepseek/deepseek-v4-pro",
+        }
+    )
+
+    def test_chairman_is_not_a_known_reasoning_model(self) -> None:
+        self.assertNotIn(
+            CHAIRMAN_MODEL,
+            self.KNOWN_REASONING_MODELS,
+            "a reasoning chairman that runs out of budget loses the entire run",
+        )
 
 
 if __name__ == "__main__":

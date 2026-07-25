@@ -27,32 +27,51 @@ PROVIDER_ROUTING: Final[dict[str, object]] = {
 # Alibaba and served from Vertex is still an Alibaba voice. Houses are what must
 # differ; the serving provider is a privacy concern, handled by PROVIDER_ROUTING.
 VOTER_MODELS: Final[tuple[str, ...]] = (
-    "mistralai/mistral-small-2603",
+    "deepseek/deepseek-v4-flash",
     "google/gemini-3.5-flash-lite",
-    "qwen/qwen3.6-35b-a3b",
+    "moonshotai/kimi-k2-0905",
 )
 # Note 2026-05-15: `deepseek/deepseek-r1-0528` was Voter 3 but exhibited a persistent
 # refusal pattern on Italian-language queries (3/4 fails observed). Swapped to Qwen3
 # 235B Thinking — Alibaba multilingual training is more reliable on non-English content.
 #
-# Note 2026-07-26: Qwen3 235B in turn proved fragile (~25% failures) on long Italian
-# queries. Twice now a European-language problem was answered with an Asian model, so
-# Voter 1 is European: Mistral Small 4. The lesson is not the model though — it is that
-# the failure was found by running, not by choosing. A suite of long Italian prompts
-# belongs in the test pyramid, otherwise this note gets a third entry.
+# Note 2026-07-26 — THE ITALIAN BUG WAS NEVER ABOUT ITALIAN.
+# DeepSeek R1 was dropped in May for "refusing Italian queries"; Qwen3 235B replaced it
+# and degraded ~25% on the same queries. Two swaps on one theory. Running the council for
+# real showed the actual cause: both were REASONING models. They spend max_tokens on
+# internal thought and only then write `content` — and an Italian prompt makes them think
+# longer, so they hit the ceiling more often. HTTP 200, empty content, nobody the wiser.
+# The language was a correlate, never the cause. See client.py for the diagnosis.
 #
-# Model refresh 2026-07-26 (previous set was May): all three replaced with the current
-# generation, constrained to what survives full ZDR. Cost fell from ~$0.027 to
-# ~$0.015/run — the frontier tier buys convergence, and a council that converges is an
-# expensive echo. Voters need to disagree; only the chairman needs to be strong.
+# Consequence for this seat: voters are chosen by whether they ANSWER, not by pedigree.
+# And they are measured with the REAL prompt: kimi-k3 passed a short probe (496 tok) and
+# was picked, then failed on the actual stage-1 prompt, which is far longer. A model that
+# answers a test question is not a model that answers yours.
+# Measured 2026-07-26 against full ZDR with the real Italian prompt at max_tokens=800:
+#   deepseek-v4-flash    123 tok, no reasoning        -> in
+#   gemini-3.5-flash-lite 90 tok, no reasoning        -> in
+#   kimi-k2-0905         715 tok, no reasoning        -> in
+#   qwen3.5 9B/27B/122B, qwen3.6-35b  EMPTY, finish=length (all reasoning models) -> out
+#   mistral-small-4 / 3.2  HTTP 429 rate-limited upstream (not a ZDR problem) -> out
+#
+#   kimi-k3 / kimi-k2.6  EMPTY on the real prompt (reasoning) -> out; k3 also costs
+#                        $15/M out, so raising max_tokens would cost more than the run
+#
+# Europe is absent for rate limits, not for privacy: OpenRouter's shared quota to Mistral
+# is exhausted. A BYOK Mistral key removes the ceiling and brings Voter EU back — worth
+# doing, since two of three voters are Chinese houses today.
 
 # Chairman lives OUTSIDE the voter pool to avoid self-favor bias in synthesis, and
 # comes from a fourth house. Anthropic is excluded everywhere — whoever orchestrates
 # the council does not sit in it (Claude Code is the daily driver here).
-# Houses: Mistral (FR) / Google (US) / Alibaba (CN), synthesised by OpenAI (US).
-# Three jurisdictions, not four: with ZDR fully on, the catalogue offers only US,
-# France and China. Cohere (CA) and AI21 (IL) have no ZDR endpoints. The repetition
-# falls on the seat that does not vote — accepted deliberately, not overlooked.
+# Houses: DeepSeek (CN) / Google (US) / Moonshot (CN), synthesised by OpenAI (US).
+#
+# THE CHAIRMAN MUST NOT BE A REASONING MODEL. A voter that burns its budget thinking
+# leaves a 2-of-3 council: degraded, still useful. The chairman doing it leaves NO final
+# answer — the whole run is lost. Kimi K3 is the strongest model here and still sits
+# among the voters for exactly this reason: it reasons, and the synthesis prompt is the
+# longest of the three stages. Capability on the chair is worth nothing without
+# reliability. This is why "spend on the chairman" has a limit.
 CHAIRMAN_MODEL: Final[str] = "openai/gpt-5.6-luna"
 
 # Stage-specific token limits (raised from V1 after truncation bugs in initial run)
