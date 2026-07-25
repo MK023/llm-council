@@ -43,3 +43,22 @@ ignore = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+# Coverage — misurata per la prima volta il 2026-07-26: era al 50%, con il cuore del
+# protocollo (stages.py) al 40% e il client HTTP al 93%. Si testava ciò che era facile
+# da mockare. La soglia è un PAVIMENTO, non un obiettivo: serve a impedire che entri
+# codice non testato, non a certificare qualità — quella la misura il mutation testing.
+[tool.coverage.run]
+source = ["council"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+# 58% globale contro un valore attuale del 60% (con branch coverage attiva): un
+# pavimento con due punti di margine. A 60 esatti il gate scatterebbe alla prima riga
+# non coperta, e un gate che si rompe subito è un gate che qualcuno disattiva.
+# Il buco dichiarato è __main__.py al 21% — orchestrazione CLI, prossimo debito.
+# I moduli critici hanno una soglia separata e più alta, applicata in CI.
+fail_under = 58
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
