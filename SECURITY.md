@@ -11,17 +11,39 @@ This is a **single-user CLI tool** invoked locally (or wrapped by a Claude Code 
 
 ## Hardened against
 
-Mapped to [OWASP Top 10 for LLM Applications](https://owasp.org/www-project-top-10-for-large-language-model-applications/):
+Mapped to the [OWASP Top 10 for LLM Applications **2025**](https://genai.owasp.org/llm-top-10/).
 
-| OWASP ID | Risk | Mitigation in this project |
+> **Renumbered 2026-07-26.** This file previously used the 2023 list, where the IDs mean
+> different things: 2023's LLM05 was Supply Chain, 2025's LLM05 is Improper Output Handling.
+> Anyone cross-referencing an ID against the current list was being misled. Two categories
+> are new (LLM07, LLM08) and two were dropped (Insecure Plugin Design, Model Theft).
+
+| OWASP ID | Risk | Status in this project |
 |---|---|---|
-| LLM01 | Prompt Injection | Server-side OpenRouter Workspace Guardrail (OWASP regex, Flag mode) + client-side fenced delimiters in Stage 2/3 prompts |
-| LLM02 | Insecure Output Handling | Chairman synthesis is plain markdown text; never executed as code, shell, or SQL |
-| LLM04 | Denial of Service | Input length cap (4000 chars), per-run token ceiling (50k), `$5` OpenRouter spend cap, 1h key time-expiry |
-| LLM06 | Sensitive Info Disclosure | Server-side PII redaction (Email/Phone/SSN/Credit card) in Redact mode on OpenRouter Workspace; per-request ZDR routing with `data_collection: deny`, fail-closed (see below) |
-| LLM07 | Insecure Plugin Design | Skill invokes only the local Python module; no external download/execution; API key from `.env` only |
-| LLM08 | Excessive Agency | No autonomous rerun, escalation, or config modification based on output |
-| LLM09 | Overreliance | Chairman output framed as "recommendation, not verdict" in skill instructions; divergences between voters surfaced explicitly |
+| **LLM01** | Prompt Injection | **Mitigated.** Fenced delimiters isolate voter output before it re-enters Stage 2/3 prompts — a voter's answer is untrusted input to the other voters. Server-side OpenRouter Prompt Injection Guardrail (regex, Flag mode). Note the direct/indirect distinction: here the *indirect* path is the real one, since model output is fed back into model input. |
+| **LLM02** | Sensitive Information Disclosure | **Mitigated.** Per-request ZDR routing with `data_collection: deny`, fail-closed. Server-side PII redaction (email/phone/SSN/card). Telemetry carries identifiers only — never the question or the answers, enforced by `tests/test_stages.py::TestTelemetryPrivacy`. The API key is redacted in `__repr__`, never logged, and a test asserts it never reaches stdout/stderr. |
+| **LLM03** | Supply Chain | **Mitigated — no longer out of scope.** Zero runtime dependencies (stdlib only, enforced by a CI check). The real supply chain here is the *pipeline*: GitHub Actions run third-party code on every push. Actions pinned to SHA with version comments, `persist-credentials: false`, zizmor auditing the workflows as a blocking gate, Dependabot on the actions. Previously this row read "out of scope, stdlib-only" — true of the runtime, false of the CI. |
+| **LLM04** | Data and Model Poisoning | **Out of scope.** We are a consumer of hosted models, not a trainer; no fine-tuning, no embedding store under our control. |
+| **LLM05** | Improper Output Handling | **Mitigated.** Model output is printed as text and never executed: no `eval`, no shell, no SQL, no HTML rendering. Stage 2 rankings are regex-validated and a non-matching output is flagged invalid, never guessed — verified by `test_unparseable_output_is_flagged_not_guessed`. |
+| **LLM06** | Excessive Agency | **Mitigated.** No autonomous rerun, no self-escalation, no config rewriting. The CLI runs once per invocation with an explicit question. Absorbs 2023's Insecure Plugin Design: the Claude Code skill invokes only the local module, with no external download or execution. |
+| **LLM07** | System Prompt Leakage | **Not applicable, by design.** The project has no confidential system prompt: `stage2_prompt` and `stage3_prompt` live in `config.py` in a public MIT repository. Nothing to leak — and that is the point. A prompt is not a security control; if secrecy of the prompt mattered, the design would be wrong. |
+| **LLM08** | Vector and Embedding Weaknesses | **Out of scope.** No RAG, no vector database, no embeddings. Nothing is retrieved: the council reasons only over the question and the voters' own answers. |
+| **LLM09** | Misinformation | **Mitigated — this is the project's subject.** The whole point is countering single-model sycophancy. Divergences between voters are surfaced explicitly, the chairman output is framed as "recommendation, not verdict", and a degraded run (a fallen voter) exits **3**, not 0 — the caller is told that the contradiction was weaker than intended. See `tests/test_cli.py::TestExitContract`. |
+| **LLM10** | Unbounded Consumption | **Mitigated.** Input capped at 4000 chars, per-stage token limits, a 50k cumulative ceiling that aborts the run (exit 4), 256KB response cap, 90s hard timeout, retry only on transient errors, plus a $5 spend cap and time expiry on the OpenRouter key. Was "LLM04 Model DoS" in the 2023 list. |
+
+### MITRE ATLAS
+
+The techniques that apply to a hosted-model consumer, and where they land here:
+
+| ATLAS technique | Relevance | Where it is addressed |
+|---|---|---|
+| **AML.T0051** — LLM Prompt Injection | Direct and indirect | LLM01 above; the indirect variant is structural to a council (voter output becomes voter input) |
+| **AML.T0057** — LLM Data Leakage | The question is sensitive by construction | LLM02: ZDR routing, no content in telemetry |
+| **AML.T0053** — LLM Plugin Compromise | The skill wrapper | LLM06: local module only, no dynamic loading |
+| **AML.T0049** — Exploit Public-Facing Application | The CI, not the CLI | LLM03: pinning + zizmor; the pipeline is the exposed surface, the tool has no inbound port |
+| **AML.T0048** — External Harms | Bad advice acted upon | LLM09: divergences surfaced, exit 3 on degraded runs, "recommendation, not verdict" |
+
+Not applicable: everything requiring model access or training influence (extraction, inversion, poisoning) — we neither host nor train a model.
 
 ## Provider routing & data retention
 
@@ -61,12 +83,6 @@ careers and personal decisions, the second is the one that cannot be undone.
 - Retry logic: exponential backoff only on retryable errors (`429`, `5xx`, `URLError`); fail-fast on `4xx` auth/bad-request to avoid quota waste and mask bugs
 - Response body size cap: **256KB** hard limit (defense against compromised-endpoint streaming)
 - Hard request timeout: **90s** per HTTP call
-
-## Out of scope
-
-- **LLM03** (Training Data Poisoning) — we are a consumer, not a trainer
-- **LLM05** (Supply Chain Vulnerabilities) — stdlib-only, no external pip dependencies
-- **LLM10** (Model Theft) — no proprietary model; we are a gateway consumer
 
 ## API key handling
 
