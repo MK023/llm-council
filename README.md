@@ -83,7 +83,7 @@ Declared before the thresholds, so they can be defended rather than lowered.
 | **Shape** | **Pyramid.** This is a single process with rich domain logic — the three-stage protocol, the ranking parser, the exit contract. Complexity lives *inside* the units, so the centre of gravity is unit tests. Not a trophy (no composed UI) and not a honeycomb (no service boundaries). |
 | **Coverage floor** | **90% global**, blocking. **90% on critical modules** (`client.py`, `config.py`, `stages.py`) — they carry the privacy posture and the protocol. A floor, never a goal: quality is measured by mutation, not by percentage. |
 | **Mutation** | Manual, on every PR touching `client/config/stages`. Each new test is verified by breaking the code and watching it go red. A test that cannot fail is not a test. |
-| **Security taxonomy** | OWASP Top 10 for LLM Applications — mapped in [SECURITY.md](SECURITY.md). Minimum tests present: provider routing (ZDR fail-closed), telemetry carries no content, model output never executed. |
+| **Security taxonomy** | OWASP Top 10 for LLM Applications **2025** — mapped in [SECURITY.md](SECURITY.md), with MITRE ATLAS techniques alongside. The mapping is itself tested (`tests/test_security_doc.py`): every category needs an explicit verdict and every cited test must exist. Minimum tests present: provider routing (ZDR fail-closed), telemetry carries no content, model output never executed. |
 | **Flaky policy** | None quarantined today. When it happens: the test leaves the required checks, stays in the suite, and is tracked in `FLAKY.md` with id, owner and ticket. A quarantined test is debt, not a passing test. |
 
 **Not covered, on purpose:** no HTTP-level integration test — the suite never touches the
