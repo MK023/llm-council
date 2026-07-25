@@ -6,23 +6,54 @@ from typing import Final
 
 from council import __version__
 
-# Voters: 3 (odd, for majority voting) from 3 distinct providers (cross-vendor divergence)
-VOTER_MODELS: Final[tuple[str, ...]] = (
-    "openai/gpt-5.4-mini",
-    "google/gemini-2.5-pro",
-    "qwen/qwen3-235b-a22b-thinking-2507",
-)
-# Note 2026-05-15: previously `deepseek/deepseek-r1-0528` was Voter 3 but exhibited
-# persistent refusal pattern on Italian-language queries (3/4 fails observed).
-# Swapped to Qwen3 235B Thinking — Alibaba multilingual training is more reliable on
-# non-English content; reasoning capability comparable, pricing 70% lower.
+# Privacy posture, enforced per-request instead of trusted to account settings.
+# `zdr` restricts routing to Zero Data Retention endpoints; `data_collection: deny`
+# drops providers that store data non-transiently and may train on it.
+# `allow_fallbacks: False` makes it FAIL-CLOSED: if no compliant endpoint is free the
+# call errors out rather than quietly answering from a retaining provider.
+#
+# Why in code and not only in the dashboard (2026-07-26): both. The account toggle
+# protects Marco; this constant protects anyone who clones the repo — and it is
+# versioned, reviewable in a PR, and testable. A privacy guarantee that lives in a
+# web console cannot be diffed.
+PROVIDER_ROUTING: Final[dict[str, object]] = {
+    "zdr": True,
+    "data_collection": "deny",
+    "allow_fallbacks": False,
+}
 
-# Chairman lives OUTSIDE the voter pool to avoid self-favor bias in synthesis.
-# Provider-distinct from voters (OpenAI/Google/DeepSeek) AND from Anthropic
-# (per Marco's strict no-self-vote rule — Claude excluded everywhere, no exceptions).
-# Llama 4 Maverick: open-weight Meta frontier model, ZDR-eligible via OpenRouter,
-# 1M context, 92% cheaper than Mistral Large 2411 with comparable synthesis quality.
-CHAIRMAN_MODEL: Final[str] = "meta-llama/llama-4-maverick"
+# Voters: 3 (odd, for majority voting) from 3 distinct model houses.
+# Divergence comes from the WEIGHTS, not from the datacentre: a model trained by
+# Alibaba and served from Vertex is still an Alibaba voice. Houses are what must
+# differ; the serving provider is a privacy concern, handled by PROVIDER_ROUTING.
+VOTER_MODELS: Final[tuple[str, ...]] = (
+    "mistralai/mistral-small-2603",
+    "google/gemini-3.5-flash-lite",
+    "qwen/qwen3.6-35b-a3b",
+)
+# Note 2026-05-15: `deepseek/deepseek-r1-0528` was Voter 3 but exhibited a persistent
+# refusal pattern on Italian-language queries (3/4 fails observed). Swapped to Qwen3
+# 235B Thinking — Alibaba multilingual training is more reliable on non-English content.
+#
+# Note 2026-07-26: Qwen3 235B in turn proved fragile (~25% failures) on long Italian
+# queries. Twice now a European-language problem was answered with an Asian model, so
+# Voter 1 is European: Mistral Small 4. The lesson is not the model though — it is that
+# the failure was found by running, not by choosing. A suite of long Italian prompts
+# belongs in the test pyramid, otherwise this note gets a third entry.
+#
+# Model refresh 2026-07-26 (previous set was May): all three replaced with the current
+# generation, constrained to what survives full ZDR. Cost fell from ~$0.027 to
+# ~$0.015/run — the frontier tier buys convergence, and a council that converges is an
+# expensive echo. Voters need to disagree; only the chairman needs to be strong.
+
+# Chairman lives OUTSIDE the voter pool to avoid self-favor bias in synthesis, and
+# comes from a fourth house. Anthropic is excluded everywhere — whoever orchestrates
+# the council does not sit in it (Claude Code is the daily driver here).
+# Houses: Mistral (FR) / Google (US) / Alibaba (CN), synthesised by OpenAI (US).
+# Three jurisdictions, not four: with ZDR fully on, the catalogue offers only US,
+# France and China. Cohere (CA) and AI21 (IL) have no ZDR endpoints. The repetition
+# falls on the seat that does not vote — accepted deliberately, not overlooked.
+CHAIRMAN_MODEL: Final[str] = "openai/gpt-5.6-luna"
 
 # Stage-specific token limits (raised from V1 after truncation bugs in initial run)
 MAX_TOKENS_STAGE_1: Final[int] = 800

@@ -15,6 +15,7 @@ from council.config import (
     MAX_RESPONSE_BYTES,
     MAX_RETRIES,
     OPENROUTER_URL,
+    PROVIDER_ROUTING,
     RETRY_BACKOFF_SECONDS,
     RETRYABLE_STATUS_CODES,
     TEMPERATURE,
@@ -71,12 +72,17 @@ class OpenRouterClient:
         Optional `metadata` is forwarded inside the JSON body's `metadata` field;
         OpenRouter's Langfuse plugin reads `langfuse_session_id`, `langfuse_user_id`,
         and `langfuse_tags` from there to group traces into a single session.
+
+        Every request carries PROVIDER_ROUTING: without it OpenRouter is free to pick
+        any endpoint serving the model, so a model chosen for its zero-retention
+        guarantee could be answered by a provider that retains.
         """
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "provider": dict(PROVIDER_ROUTING),
         }
         if metadata:
             payload["metadata"] = metadata
