@@ -16,9 +16,9 @@ Single-model LLM responses suffer from **sycophancy bias** (RLHF tends to optimi
         │
         ▼
 ┌─── STAGE 1 (parallel logic, serial execution) ───┐
-│  Voter 1: openai/gpt-5.4-mini                    │
-│  Voter 2: google/gemini-2.5-pro                  │
-│  Voter 3: qwen/qwen3-235b-a22b-thinking-2507     │
+│  Voter 1: deepseek/deepseek-v4-flash             │
+│  Voter 2: google/gemini-3.5-flash-lite           │
+│  Voter 3: moonshotai/kimi-k2-0905                │
 │  → 3 independent responses (anonymized A/B/C)    │
 └───────────────────────────────────────────────────┘
         │
@@ -30,8 +30,8 @@ Single-model LLM responses suffer from **sycophancy bias** (RLHF tends to optimi
         │
         ▼
 ┌─── STAGE 3 (synthesis by external chairman) ─────┐
-│  Chairman: meta-llama/llama-4-maverick           │
-│  (different provider from all voters)            │
+│  Chairman: openai/gpt-5.6-luna                   │
+│  (different house, never a reasoning model)      │
 │  → final answer + divergence analysis            │
 └───────────────────────────────────────────────────┘
 ```
@@ -70,8 +70,37 @@ The script will emit Langfuse-compatible structured events on stderr (a forwarde
 ## Run tests
 
 ```bash
-python -m unittest discover tests/
+python -m unittest discover tests/          # 85 tests, no network
+python -m coverage run -m unittest discover tests/ && python -m coverage report
 ```
+
+## Test contract
+
+Declared before the thresholds, so they can be defended rather than lowered.
+
+| | |
+|---|---|
+| **Shape** | **Pyramid.** This is a single process with rich domain logic — the three-stage protocol, the ranking parser, the exit contract. Complexity lives *inside* the units, so the centre of gravity is unit tests. Not a trophy (no composed UI) and not a honeycomb (no service boundaries). |
+| **Coverage floor** | **90% global**, blocking. **90% on critical modules** (`client.py`, `config.py`, `stages.py`) — they carry the privacy posture and the protocol. A floor, never a goal: quality is measured by mutation, not by percentage. |
+| **Mutation** | Manual, on every PR touching `client/config/stages`. Each new test is verified by breaking the code and watching it go red. A test that cannot fail is not a test. |
+| **Security taxonomy** | OWASP Top 10 for LLM Applications — mapped in [SECURITY.md](SECURITY.md). Minimum tests present: provider routing (ZDR fail-closed), telemetry carries no content, model output never executed. |
+| **Flaky policy** | None quarantined today. When it happens: the test leaves the required checks, stays in the suite, and is tracked in `FLAKY.md` with id, owner and ticket. A quarantined test is debt, not a passing test. |
+
+**Not covered, on purpose:** no HTTP-level integration test — the suite never touches the
+network. A weekly scheduled E2E against the live API is the declared gap; until then, a
+model that starts refusing is caught by running the council, not by CI.
+
+## Pipeline level
+
+**Level 1 → 3 (partial).** Lint, tests on three Python versions, coverage gates, CodeQL,
+and workflow auditing (zizmor) all block the merge. Actions pinned to SHA, `persist-credentials: false`,
+branch protection with required checks and no direct push to `main`.
+
+Deliberately absent: SBOM and signed attestation. This project has **zero runtime
+dependencies** and ships **no artifact** — an SBOM here would list nothing and a signature
+would sign nothing. The supply chain that does exist is the pipeline itself, and that is
+what the SHA pinning and zizmor defend. A motivated Level 1 is professional; a cargo-cult
+Level 4 is theatre.
 
 ## Security hardening
 
@@ -84,16 +113,22 @@ python -m unittest discover tests/
 - TLS cert chain validated by default (`urllib`)
 - API key never logged or surfaced in error messages
 
-## Cost reference (T2 balanced tier)
+## Cost reference
 
-| Component | Approx cost per query |
+Measured on a real run, 2026-07-26 (not estimated):
+
+| Component | Cost per query |
 |---|---|
-| Stage 1 (3 voters) | ~$0.008 |
-| Stage 2 (3 rankings) | ~$0.010 |
-| Stage 3 (chairman, Llama 4 Maverick) | ~$0.001 |
-| **Total per query** | **~$0.020** |
+| Stage 1 (3 voters) | ~$0.004 |
+| Stage 2 (3 blind rankings) | ~$0.004 |
+| Stage 3 (chairman, GPT-5.6 Luna) | ~$0.005 |
+| **Total per query** | **~$0.013** |
 
-With a $5 OpenRouter budget you get **~250 queries**.
+With a $5 OpenRouter budget that is **~380 queries**. Latency ~56s end to end.
+
+Cheaper than the May configuration (~$0.027) despite newer models: the frontier tier
+buys convergence, and a council that converges is an expensive echo. Voters are chosen
+to disagree and to *answer* — see the measurements in `config.py`.
 
 ## When to use the council vs Claude alone
 
