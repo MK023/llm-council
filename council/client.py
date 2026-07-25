@@ -159,8 +159,11 @@ class OpenRouterClient:
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             raise OpenRouterError("Response missing 'choices' array", request_id=request_id)
-        message = choices[0].get("message", {})
-        if not isinstance(message.get("content"), str):
+        choice = choices[0]
+        message = choice.get("message", {})
+        content = message.get("content")
+        # An empty string is as useless as a missing one: a blank voter is not a voter.
+        if not isinstance(content, str) or not content.strip():
             # Distinguish model-refusal (content-policy decline) from malformed schema
             refusal = message.get("refusal")
             if refusal:
@@ -168,4 +171,22 @@ class OpenRouterClient:
                     f"Model refused: {str(refusal)[:200]}",
                     request_id=request_id,
                 )
-            raise OpenRouterError("Response message has no string 'content'", request_id=request_id)
+            # Reasoning models spend max_tokens on internal thought and only then write
+            # `content`. Run out of budget and the answer never arrives: HTTP 200, empty
+            # content, a full `reasoning` field and finish_reason='length'.
+            #
+            # This diagnosis cost the project two model swaps. From May 2026 a voter kept
+            # failing on long Italian queries and it was read as a language weakness — the
+            # model was replaced twice on that theory. It was never the language: Italian
+            # prompts simply make these models think longer, so they hit the ceiling more
+            # often. The old error ("no string 'content'") described the symptom and hid
+            # the cause. Name it, and the next person loses minutes instead of months.
+            if message.get("reasoning") and choice.get("finish_reason") == "length":
+                raise OpenRouterError(
+                    "Reasoning model exhausted max_tokens before producing an answer "
+                    "(finish_reason='length', 'reasoning' populated, 'content' empty). "
+                    "Fix: raise max_tokens, send reasoning={'effort':'none'} where the "
+                    "model supports it, or use a non-reasoning model for this seat.",
+                    request_id=request_id,
+                )
+            raise OpenRouterError("Response message has no usable 'content'", request_id=request_id)
