@@ -70,18 +70,14 @@ class TestProviderRoutingInPayload(unittest.TestCase):
     def test_payload_denies_data_collection(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value = _mock_response(_OK_BODY)
         self.client.call("test/model", self.messages, max_tokens=10)
-        self.assertEqual(
-            self._sent_payload(mock_urlopen)["provider"]["data_collection"], "deny"
-        )
+        self.assertEqual(self._sent_payload(mock_urlopen)["provider"]["data_collection"], "deny")
 
     @patch("council.client.urllib.request.urlopen")
     def test_payload_is_fail_closed_on_fallbacks(self, mock_urlopen: MagicMock) -> None:
         """No silent downgrade: fail rather than answer from a retaining endpoint."""
         mock_urlopen.return_value = _mock_response(_OK_BODY)
         self.client.call("test/model", self.messages, max_tokens=10)
-        self.assertIs(
-            self._sent_payload(mock_urlopen)["provider"]["allow_fallbacks"], False
-        )
+        self.assertIs(self._sent_payload(mock_urlopen)["provider"]["allow_fallbacks"], False)
 
     @patch("council.client.urllib.request.urlopen")
     def test_metadata_does_not_displace_provider(self, mock_urlopen: MagicMock) -> None:
