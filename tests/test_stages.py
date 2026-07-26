@@ -123,9 +123,19 @@ class TestTelemetryPrivacy(unittest.TestCase):
         self.assertIsNone(_build_metadata(None, stage="stage_1"))
 
     def test_metadata_carries_only_identifiers(self) -> None:
+        """The three OpenRouter Broadcast fields, and nothing else."""
         meta = _build_metadata("sess-123", stage="stage_1")
         assert meta is not None
-        self.assertEqual(set(meta), {"langfuse_session_id", "langfuse_user_id", "langfuse_tags"})
+        self.assertEqual(set(meta), {"user", "session_id", "trace"})
+        self.assertEqual(meta["session_id"], "sess-123")
+        self.assertEqual(meta["trace"]["span_name"], "stage_1")
+
+    def test_session_id_is_capped_at_the_broadcast_limit(self) -> None:
+        """OpenRouter caps user/session_id at 128 chars; Langfuse drops over 200."""
+        meta = _build_metadata("x" * 300, stage="stage_1")
+        assert meta is not None
+        self.assertEqual(len(meta["session_id"]), 128)
+        self.assertLessEqual(len(meta["user"]), 128)
 
     def test_question_never_reaches_the_metadata(self) -> None:
         client = _client(*[_result("a")] * 3)

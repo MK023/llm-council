@@ -69,9 +69,14 @@ class OpenRouterClient:
     ) -> CallResult:
         """Sends a chat completion request, retrying on transient errors only.
 
-        Optional `metadata` is forwarded inside the JSON body's `metadata` field;
-        OpenRouter's Langfuse plugin reads `langfuse_session_id`, `langfuse_user_id`,
-        and `langfuse_tags` from there to group traces into a single session.
+        Optional `metadata` carries OpenRouter Broadcast trace fields. They are
+        TOP-LEVEL keys of the request body — `user`, `session_id`, `trace` — not
+        entries inside a `metadata` object: OpenRouter never reads `metadata` for
+        this, which is why sessions were never grouped before 2026-07-26.
+
+        Only the three documented keys are forwarded. Copying the dict wholesale
+        would let a caller overwrite `model` or `provider`, and `provider` is the
+        privacy guarantee.
 
         Every request carries PROVIDER_ROUTING: without it OpenRouter is free to pick
         any endpoint serving the model, so a model chosen for its zero-retention
@@ -85,7 +90,10 @@ class OpenRouterClient:
             "provider": dict(PROVIDER_ROUTING),
         }
         if metadata:
-            payload["metadata"] = metadata
+            # Allowlist: never let caller-supplied keys reach `model` or `provider`.
+            for key in ("user", "session_id", "trace"):
+                if key in metadata:
+                    payload[key] = metadata[key]
         start = time.perf_counter()
         last_error: Exception | None = None
 
