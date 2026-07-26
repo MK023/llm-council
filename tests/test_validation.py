@@ -75,15 +75,15 @@ class TestLoadEnv(unittest.TestCase):
     def test_preserves_equals_in_value(self) -> None:
         """A value containing '=' (e.g. base64) must be preserved entirely."""
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
-            f.write("MY_KEY=abc=def=ghi\n")
-            f.write("OTHER=plain\n")
+            f.write("OPENROUTER_API_KEY=abc=def=ghi\n")
+            f.write("LANGFUSE_HOST=plain\n")
             temp_path = Path(f.name)
         try:
-            os.environ.pop("MY_KEY", None)
-            os.environ.pop("OTHER", None)
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            os.environ.pop("LANGFUSE_HOST", None)
             load_env(temp_path)
-            self.assertEqual(os.environ.get("MY_KEY"), "abc=def=ghi")
-            self.assertEqual(os.environ.get("OTHER"), "plain")
+            self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "abc=def=ghi")
+            self.assertEqual(os.environ.get("LANGFUSE_HOST"), "plain")
         finally:
             temp_path.unlink()
 
@@ -91,12 +91,12 @@ class TestLoadEnv(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
             f.write("# this is a comment\n")
             f.write("\n")
-            f.write("VALID=yes\n")
+            f.write("LANGFUSE_HOST=yes\n")
             temp_path = Path(f.name)
         try:
-            os.environ.pop("VALID", None)
+            os.environ.pop("LANGFUSE_HOST", None)
             load_env(temp_path)
-            self.assertEqual(os.environ.get("VALID"), "yes")
+            self.assertEqual(os.environ.get("LANGFUSE_HOST"), "yes")
         finally:
             temp_path.unlink()
 

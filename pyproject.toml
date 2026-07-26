@@ -55,9 +55,16 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_covered = false
-# 90% globale contro un 94% reale: quattro punti di margine. Alzata dal 58% del
-# 2026-07-26 quando __main__.py e' passato dal 21% al 91% — il debito dichiarato in
-# quella nota e' stato saldato lo stesso giorno, ed era l'ultimo buco grosso.
-# Resta un pavimento, non un obiettivo: la qualita' la misura il mutation testing.
-fail_under = 90
+# 100%, righe e branch. Non e' un traguardo inseguito per il numero: le 17 righe
+# che mancavano al 94% erano comportamenti veri e non testati — lo stage 2 che
+# fallisce del tutto, il SECONDO controllo del tetto token, e soprattutto
+# `_label_responses`, cioe' la difesa da prompt injection che SECURITY.md dichiara
+# a nome del progetto e che nessuno aveva mai esercitato.
+#
+# Su 399 statement e 84 branch il 100% e' difendibile: il codice e' piccolo e non
+# ha rami irraggiungibili. Su una base grande sarebbe un'altra conversazione, e la
+# regola tornerebbe a essere "clean as you code" sul solo codice nuovo.
+# Resta un PAVIMENTO: la coverage dice quali righe girano, non se le asserzioni
+# valgono qualcosa. Quello lo dice il mutation testing, che si fa a mano su ogni PR.
+fail_under = 100
 exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
