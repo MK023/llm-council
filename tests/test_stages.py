@@ -8,6 +8,7 @@ selection — plus one privacy invariant: telemetry must never carry content.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
 from unittest.mock import MagicMock, patch
@@ -189,12 +190,22 @@ class TestTraceRecordCarriesHashNotContent(unittest.TestCase):
         trace = TraceContext(question_hash=hash_question(self.QUESTION))
         self.assertNotIn(self.QUESTION, self._emitted(trace))
 
-    def test_the_same_question_always_hashes_the_same(self) -> None:
-        """Correlation across runs is the point: a random id would not do."""
-        self.assertEqual(hash_question(self.QUESTION), hash_question(self.QUESTION))
+    def test_the_hash_is_a_stable_sha256_prefix(self) -> None:
+        """Correlation across runs is the point: a random id would not do.
+
+        Pinned to the algorithm, not to itself: comparing the function against a second
+        call to the same function is tautological — it would pass even if the function
+        returned a constant.
+        """
+        expected = hashlib.sha256(self.QUESTION.encode()).hexdigest()[:8]
+        actual = hash_question(self.QUESTION)
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(actual), 8)
 
     def test_different_questions_hash_differently(self) -> None:
-        self.assertNotEqual(hash_question("una domanda"), hash_question("un altra domanda"))
+        first = hash_question("una domanda")
+        second = hash_question("un altra domanda")
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":
