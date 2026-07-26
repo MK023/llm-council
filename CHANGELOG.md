@@ -5,6 +5,54 @@ All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-07-26
+
+Nine PRs in one session (#3–#11). The theme: three defences the project *declared*
+but never *enforced*, found by running it instead of reading it.
+
+### Security
+- **Zero Data Retention is now enforced per request.** `PROVIDER_ROUTING` sends
+  `{"zdr": true, "data_collection": "deny", "allow_fallbacks": false}` on every call —
+  **fail-closed**: no compliant endpoint means an error, never a silent downgrade to a
+  provider that retains. Before this the payload carried no `provider` block at all and
+  the account toggle was off: the 0.2.0 entry below claims "ZDR routing compliance",
+  which described the models, not the routing.
+- **Path traversal on `--env` closed** (SonarCloud, High). Any `KEY=VALUE` file on disk
+  could be read into `os.environ` — not just a file read, an environment injection, on a
+  tool whose arguments are assembled by a model. Now: path resolved, must be a regular
+  file under 64KB, and only four allowlisted keys are imported.
+- **Prompt-injection fences carry a per-run nonce.** The delimiters were fixed strings
+  in a public repo, so a voter could close its own block by typing the closing marker.
+  Stage 3 rankings are now fenced too — they were interpolated raw while the responses
+  beside them were fenced.
+- OWASP mapping realigned to the **2025** taxonomy (the IDs are not interchangeable with
+  2023: LLM05 went from Supply Chain to Improper Output Handling), plus MITRE ATLAS
+  techniques. Supply Chain moved from "out of scope" to mitigated: it was true of the
+  runtime and false of the CI.
+
+### Fixed
+- **The "Italian bug" was never about Italian.** Two voters were replaced in two months
+  on the theory that they refused Italian queries. Both were *reasoning* models: they
+  spend `max_tokens` thinking and only then write `content`, and an Italian prompt makes
+  them think longer. The error message now names the cause instead of the symptom.
+- **Langfuse sessions were never grouped** because the fields went into `metadata`
+  instead of top-level `user` / `session_id` / `trace`. Seven patterns had been tested
+  in May — all seven varied the contents of a field nobody reads.
+- Voters and chairman replaced with models **measured against the real prompt** under
+  full ZDR. Cost per run: ~$0.027 → **~$0.013**.
+- A reasoning model may never be the chairman: a voter that runs out of budget leaves a
+  2-of-3 council, the chairman doing it loses the entire run.
+
+### Testing & CI
+- Coverage **50% → 100%** (lines and branches), measured for the first time. Among the
+  uncovered lines was `_label_responses`, the LLM01 defence the docs claim by name.
+- **33 → 122 tests**, each new behaviour verified by mutation: break the code, watch the
+  test go red.
+- Branch protection with **8 required checks**; actions pinned to SHA with zizmor
+  guarding the pinning; SonarCloud analysis from CI with the same coverage as the local
+  gates; **weekly live E2E** that fails on exit 3 — the degraded run that a human spots
+  and a cron does not.
+
 ## [0.2.0] — 2026-05-15
 
 ### Added

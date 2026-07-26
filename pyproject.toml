@@ -1,6 +1,6 @@
 [project]
 name = "llm-council"
-version = "0.2.0"
+version = "0.3.0"
 description = "Multi-model anti-sycophancy verification council via OpenRouter (stdlib-only)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -61,7 +61,7 @@ skip_covered = false
 # `_label_responses`, cioe' la difesa da prompt injection che SECURITY.md dichiara
 # a nome del progetto e che nessuno aveva mai esercitato.
 #
-# Su 399 statement e 84 branch il 100% e' difendibile: il codice e' piccolo e non
+# Su ~400 statement e ~90 branch il 100% e' difendibile: il codice e' piccolo e non
 # ha rami irraggiungibili. Su una base grande sarebbe un'altra conversazione, e la
 # regola tornerebbe a essere "clean as you code" sul solo codice nuovo.
 # Resta un PAVIMENTO: la coverage dice quali righe girano, non se le asserzioni
