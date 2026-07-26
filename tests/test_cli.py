@@ -255,8 +255,12 @@ class TestEnvPathIsBounded(unittest.TestCase):
                 self.assertEqual(os.environ["LANGFUSE_HOST"], "https://x")
 
     def test_directory_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as d, self.assertRaises(ValueError):
-            load_env(Path(d))
+        with tempfile.TemporaryDirectory() as d:
+            # Only load_env sits inside assertRaises: if TemporaryDirectory itself
+            # raised, the test would pass for the wrong reason.
+            target = Path(d)
+            with self.assertRaises(ValueError):
+                load_env(target)
 
     def test_oversized_file_is_refused(self) -> None:
         """A .env is small. /dev/zero-shaped input must not be read into memory."""

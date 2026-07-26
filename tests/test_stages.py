@@ -8,11 +8,13 @@ selection — plus one privacy invariant: telemetry must never carry content.
 
 from __future__ import annotations
 
+import json
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from council.client import CallResult, OpenRouterError
 from council.config import CHAIRMAN_MODEL, MAX_TOKENS_STAGE_3, VOTER_MODELS
+from council.observability import TraceContext, emit, hash_question
 from council.stages import (
     _build_metadata,
     stage1_responses,
@@ -152,6 +154,38 @@ class TestTelemetryPrivacy(unittest.TestCase):
             metadata = call.kwargs.get("metadata") or {}
             self.assertNotIn(answer, str(metadata))
             self.assertNotIn(self.SECRET, str(metadata))
+
+
+class TestTraceRecordCarriesHashNotContent(unittest.TestCase):
+    """`hash_question` promises "correlation without leaking question content".
+
+    It computed the hash and nobody emitted it: the promise existed, the mechanism
+    did not. These tests pin both halves — the hash IS in the record, the question
+    is NOT — so the field cannot quietly go missing again.
+    """
+
+    QUESTION = "dovrei accettare l offerta di lavoro a Milano"
+
+    def _emitted(self, trace: TraceContext) -> str:
+        with patch("council.observability._LOGGER") as logger:
+            emit("query_start", trace)
+            return logger.info.call_args[0][0]
+
+    def test_the_hash_reaches_the_log_record(self) -> None:
+        trace = TraceContext(question_hash=hash_question(self.QUESTION))
+        record = json.loads(self._emitted(trace))
+        self.assertEqual(record["question_hash"], hash_question(self.QUESTION))
+
+    def test_the_question_itself_never_reaches_the_log_record(self) -> None:
+        trace = TraceContext(question_hash=hash_question(self.QUESTION))
+        self.assertNotIn(self.QUESTION, self._emitted(trace))
+
+    def test_the_same_question_always_hashes_the_same(self) -> None:
+        """Correlation across runs is the point: a random id would not do."""
+        self.assertEqual(hash_question(self.QUESTION), hash_question(self.QUESTION))
+
+    def test_different_questions_hash_differently(self) -> None:
+        self.assertNotEqual(hash_question("una domanda"), hash_question("un altra domanda"))
 
 
 if __name__ == "__main__":

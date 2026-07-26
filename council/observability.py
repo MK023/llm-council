@@ -8,6 +8,7 @@ emit trace + span events as structured log records that a Langfuse forwarder
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -41,7 +42,6 @@ class TraceContext:
 
     trace_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     question_hash: str = ""
-    started_at: float = field(default_factory=time.time)
 
 
 def emit(event: str, trace: TraceContext, **fields: Any) -> None:
@@ -49,6 +49,10 @@ def emit(event: str, trace: TraceContext, **fields: Any) -> None:
     record = {
         "ts": round(time.time(), 3),
         "trace_id": trace.trace_id,
+        # Correlates runs on the SAME question across sessions, without ever storing
+        # the question. Computed since day one, emitted only from 2026-07-26 — the
+        # promise was in the docstring, the mechanism was missing.
+        "question_hash": trace.question_hash,
         "event": event,
         "langfuse_opt_in": _LANGFUSE_ENABLED,
         **fields,
@@ -58,6 +62,4 @@ def emit(event: str, trace: TraceContext, **fields: Any) -> None:
 
 def hash_question(question: str) -> str:
     """8-char prefix hash for trace correlation without leaking question content to logs."""
-    import hashlib
-
     return hashlib.sha256(question.encode()).hexdigest()[:8]
