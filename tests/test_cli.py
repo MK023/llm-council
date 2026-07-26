@@ -204,28 +204,149 @@ class TestEnvLoading(unittest.TestCase):
     def test_values_are_read_from_file(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / ".env"
-            p.write_text("SOME_TEST_KEY=abc123\n# commento\n\nMALFORMED_LINE\n")
+            p.write_text("OPENROUTER_API_KEY=abc123\n# commento\n\nMALFORMED_LINE\n")
             with patch.dict(os.environ, {}, clear=True):
                 load_env(p)
-                self.assertEqual(os.environ["SOME_TEST_KEY"], "abc123")
+                self.assertEqual(os.environ["OPENROUTER_API_KEY"], "abc123")
                 self.assertNotIn("MALFORMED_LINE", os.environ)
 
     def test_environment_wins_over_file(self) -> None:
         """Doppler injects the key as an env var: the file must never override it."""
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / ".env"
-            p.write_text("SOME_TEST_KEY=from-file\n")
-            with patch.dict(os.environ, {"SOME_TEST_KEY": "from-env"}, clear=True):
+            p.write_text("OPENROUTER_API_KEY=from-file\n")
+            with patch.dict(os.environ, {"OPENROUTER_API_KEY": "from-env"}, clear=True):
                 load_env(p)
-                self.assertEqual(os.environ["SOME_TEST_KEY"], "from-env")
+                self.assertEqual(os.environ["OPENROUTER_API_KEY"], "from-env")
 
     def test_value_containing_equals_is_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / ".env"
-            p.write_text("SOME_TEST_KEY=a=b=c\n")
+            p.write_text("OPENROUTER_API_KEY=a=b=c\n")
             with patch.dict(os.environ, {}, clear=True):
                 load_env(p)
-                self.assertEqual(os.environ["SOME_TEST_KEY"], "a=b=c")
+                self.assertEqual(os.environ["OPENROUTER_API_KEY"], "a=b=c")
+
+
+class TestEnvPathIsBounded(unittest.TestCase):
+    """`--env` is attacker-influenced: this tool is invoked by a Claude Code skill,
+    so its arguments are assembled by a model. Reading an arbitrary KEY=VALUE file
+    into os.environ is an environment injection, not just a file read."""
+
+    def test_only_allowlisted_keys_are_imported(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text("OPENROUTER_API_KEY=sk-or-v1-x\nPATH=/evil\nLD_PRELOAD=/evil.so\n")
+            with patch.dict(os.environ, {}, clear=True):
+                load_env(p)
+                self.assertEqual(os.environ["OPENROUTER_API_KEY"], "sk-or-v1-x")
+                self.assertNotIn("LD_PRELOAD", os.environ)
+                self.assertNotEqual(os.environ.get("PATH"), "/evil")
+
+    def test_langfuse_keys_are_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / ".env"
+            p.write_text(
+                "LANGFUSE_PUBLIC_KEY=pk\nLANGFUSE_SECRET_KEY=sk\nLANGFUSE_HOST=https://x\n"
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                load_env(p)
+                self.assertEqual(os.environ["LANGFUSE_PUBLIC_KEY"], "pk")
+                self.assertEqual(os.environ["LANGFUSE_HOST"], "https://x")
+
+    def test_directory_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(ValueError):
+            load_env(Path(d))
+
+    def test_oversized_file_is_refused(self) -> None:
+        """A .env is small. /dev/zero-shaped input must not be read into memory."""
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "big.env"
+            p.write_text("A=" + "x" * (64 * 1024 + 10))
+            with self.assertRaises(ValueError):
+                load_env(p)
+
+    def test_symlink_to_a_device_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            link = Path(d) / "link.env"
+            try:
+                link.symlink_to("/dev/null")
+            except OSError:
+                self.skipTest("symlink non supportati")
+            with self.assertRaises(ValueError):
+                load_env(link)
+
+    def test_tilde_is_expanded(self) -> None:
+        load_env(Path("~/definitely-not-here-9f3a.env"))  # must not raise
+
+    def test_bad_env_path_exits_2_without_traceback(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as d,
+            patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False),
+        ):
+            code, _, err = _run(["domanda", "--env", d])
+        self.assertEqual(code, 2)
+        self.assertIn("ENV ERROR", err)
+
+
+class TestStage2Contracts(unittest.TestCase):
+    """Stage 2 has its own failure paths, separate from stage 1 — and its own token check."""
+
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False)
+        self._env.start()
+        self.addCleanup(self._env.stop)
+
+    def test_stage2_total_failure_exits_1(self) -> None:
+        code, _, err = _run(["domanda"], stage2_rankings=OpenRouterError("ranking layer down"))
+        self.assertEqual(code, 1)
+        self.assertIn("STAGE 2 FAILED", err)
+
+    def test_token_ceiling_after_stage2_also_aborts(self) -> None:
+        """The ceiling is checked twice: stage 1 alone can pass and stage 2 push it over."""
+        half = MAX_TOTAL_TOKENS_PER_RUN // 3
+        code, _, err = _run(
+            ["domanda"],
+            stage1_responses=_stage1(tokens=half),
+            stage2_rankings=[
+                RankingResult(
+                    voter=m,
+                    result=_ok("RANK: A,B,C", tokens=MAX_TOTAL_TOKENS_PER_RUN),
+                    rank=("A", "B", "C"),
+                    reason="r",
+                    is_valid=True,
+                    error=None,
+                )
+                for m in VOTER_MODELS
+            ],
+        )
+        self.assertEqual(code, 4)
+        self.assertIn("ABORT", err)
+
+    def test_api_failed_voter_is_listed_in_the_error_summary(self) -> None:
+        """A voter that failed at the API level must appear in the calibration hints."""
+        broken = [
+            RankingResult(
+                voter=VOTER_MODELS[0],
+                result=_ok("", 0),
+                rank=None,
+                reason="",
+                is_valid=False,
+                error="429 exhausted",
+            ),
+            *_stage2()[1:],
+        ]
+        code, out, _ = _run(["domanda"], stage2_rankings=broken)
+        self.assertEqual(code, 3)
+        self.assertIn("Stage 2 API failures", out)
+        self.assertIn("429 exhausted", out)
+
+    def test_failed_stage1_voter_is_printed_with_its_error(self) -> None:
+        code, out, _ = _run(
+            ["domanda"], stage1_responses=_stage1((None, "refused by policy", None))
+        )
+        self.assertIn("[FAILED]", out)
+        self.assertIn("refused by policy", out)
 
 
 if __name__ == "__main__":

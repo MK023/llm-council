@@ -188,6 +188,19 @@ class TestReasoningModelDiagnosis(unittest.TestCase):
         )
         self.assertIn("Model refused", msg)
 
+    def test_non_object_response_is_rejected(self) -> None:
+        """A JSON array where an object is expected is a malformed response, not an answer."""
+        with patch("council.client.urllib.request.urlopen") as mock_urlopen:
+            resp = MagicMock()
+            resp.read.return_value = b'["not", "an", "object"]'
+            resp.headers = {}
+            resp.__enter__ = MagicMock(return_value=resp)
+            resp.__exit__ = MagicMock(return_value=False)
+            mock_urlopen.return_value = resp
+            with self.assertRaises(OpenRouterError) as ctx:
+                self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertIn("not a JSON object", str(ctx.exception))
+
     def test_empty_without_reasoning_is_not_blamed_on_reasoning(self) -> None:
         """Do not diagnose what is not there — the wrong cause is worse than none."""
         msg = self._call_expecting_error(
