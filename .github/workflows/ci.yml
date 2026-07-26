@@ -80,14 +80,14 @@ jobs:
       - name: Run tests under coverage
         run: python -m coverage run -m unittest discover tests/
 
-      # Global floor (58%, see pyproject): stops untested code from entering.
+      # Global floor (100%, see pyproject): stops untested code from entering.
       # It is NOT a quality claim — that is what mutation testing measures.
       - name: Coverage floor (global)
         run: python -m coverage report
 
-      # Critical modules carry the privacy posture and the protocol itself, so they
-      # answer to a higher bar than the repo average. __main__.py (CLI orchestration,
-      # 21%) is the declared debt and is deliberately outside this gate.
+      # Second, narrower gate on the modules carrying the privacy posture and the
+      # protocol. Redundant while the global floor sits at 100%, kept on purpose: if
+      # the global threshold is ever lowered, these three must not follow it down.
       - name: Coverage floor (critical modules)
         run: python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 

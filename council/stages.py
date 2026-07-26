@@ -19,8 +19,9 @@ from council.config import (
 
 _RANK_PATTERN = re.compile(RANK_REGEX, re.IGNORECASE | re.DOTALL)
 
-# User identifier propagated to Langfuse via the `metadata.langfuse_user_id` field
-# in the OpenRouter request body. Single-user CLI tool, so the identifier is static.
+# User identifier, sent as the top-level `user` field of the OpenRouter body and read
+# from there by Langfuse. Single-user CLI tool, so the identifier is static.
+# (It used to say `metadata.langfuse_user_id` — that was the bug, not the design.)
 _USER_ID = "marco-bellingeri"
 
 

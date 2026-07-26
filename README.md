@@ -1,6 +1,6 @@
 # llm-council
 
-[![CI](https://github.com/MK023/llm-council/actions/workflows/ci.yml/badge.svg)](https://github.com/MK023/llm-council/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![stdlib only](https://img.shields.io/badge/dependencies-none-brightgreen)
+[![CI](https://github.com/MK023/llm-council/actions/workflows/ci.yml/badge.svg)](https://github.com/MK023/llm-council/actions/workflows/ci.yml) [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=MK023_llm-council&metric=alert_status)](https://sonarcloud.io/summary/overall?id=MK023_llm-council) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue) ![stdlib only](https://img.shields.io/badge/dependencies-none-brightgreen)
 
 Multi-model anti-sycophancy verification council using OpenRouter as gateway.  
 3 independent voters → blind peer ranking → external chairman synthesis.
@@ -54,7 +54,7 @@ Chairman lives **outside** the voter pool to avoid self-favor bias in synthesis.
 python -m council "Should I accept the offer from Company X?"
 ```
 
-The full council flow runs (~30-60s end-to-end, ~$0.02 cost). Output goes to stdout, structured JSON observability logs go to stderr.
+The full council flow runs (~60s end-to-end, ~$0.013 cost). Output goes to stdout, structured JSON observability logs go to stderr.
 
 ## Optional: Langfuse observability
 
@@ -65,12 +65,12 @@ LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 ```
 
-The script will emit Langfuse-compatible structured events on stderr (a forwarder or the OpenRouter native Langfuse plugin can consume them).
+The stderr JSON is for local inspection. Traces reach Langfuse through **OpenRouter Broadcast** (Settings > Observability): no code, no dependency. The client sends the `user` / `session_id` / `trace` fields Broadcast reads.
 
 ## Run tests
 
 ```bash
-python -m unittest discover tests/          # 113 tests, no network
+python -m unittest discover tests/          # 122 tests, no network
 python -m coverage run -m unittest discover tests/ && python -m coverage report
 ```
 
@@ -81,7 +81,7 @@ Declared before the thresholds, so they can be defended rather than lowered.
 | | |
 |---|---|
 | **Shape** | **Pyramid.** This is a single process with rich domain logic — the three-stage protocol, the ranking parser, the exit contract. Complexity lives *inside* the units, so the centre of gravity is unit tests. Not a trophy (no composed UI) and not a honeycomb (no service boundaries). |
-| **Coverage floor** | **100%**, lines and branches, blocking. Not a number chased for its own sake: the 17 lines missing at 94% were real untested behaviour — stage 2 total failure, the *second* token-ceiling check, and the fenced-delimiter defence that SECURITY.md claims for LLM01. On 399 statements with no unreachable branches, 100% is defensible; on a large codebase the rule would go back to *clean as you code*. Still a floor: coverage says which lines run, not whether the assertions are worth anything. |
+| **Coverage floor** | **100%**, lines and branches, blocking. Not a number chased for its own sake: the 17 lines missing at 94% were real untested behaviour — stage 2 total failure, the *second* token-ceiling check, and the fenced-delimiter defence that SECURITY.md claims for LLM01. On ~400 statements with no unreachable branches, 100% is defensible; on a large codebase the rule would go back to *clean as you code*. Still a floor: coverage says which lines run, not whether the assertions are worth anything. |
 | **Mutation** | Manual, on every PR touching `client/config/stages`. Each new test is verified by breaking the code and watching it go red. A test that cannot fail is not a test. |
 | **Security taxonomy** | OWASP Top 10 for LLM Applications **2025** — mapped in [SECURITY.md](SECURITY.md), with MITRE ATLAS techniques alongside. The mapping is itself tested (`tests/test_security_doc.py`): every category needs an explicit verdict and every cited test must exist. Minimum tests present: provider routing (ZDR fail-closed), telemetry carries no content, model output never executed. |
 | **Flaky policy** | None quarantined today. When it happens: the test leaves the required checks, stays in the suite, and is tracked in `FLAKY.md` with id, owner and ticket. A quarantined test is debt, not a passing test. |
@@ -113,7 +113,7 @@ Level 4 is theatre.
 - Input length capped at 4000 chars
 - JSON response schema validated on every call
 - Stage 2 output regex-enforced; malformed responses flagged in output
-- Exponential backoff retry on `URLError` (max 3 attempts: 1s, 2s, 4s)
+- Exponential backoff retry on transient failures only — `429`, `5xx`, `URLError`, malformed JSON (max 3 attempts: 1s, 2s, 4s). A `4xx` fails fast: retrying a bad request wastes quota and hides the bug
 - Hard timeout 90s per HTTP call
 - TLS cert chain validated by default (`urllib`)
 - API key never logged or surfaced in error messages
@@ -146,28 +146,32 @@ Do **not** use the council for trivial coding or routine questions — the laten
 
 ## Known limitations
 
-### Langfuse session linkage (best-effort)
+### Langfuse session linkage — solved 2026-07-26
 
-Each council run generates 7 HTTP calls (3 Stage 1 + 3 Stage 2 + 1 Stage 3 Chairman).
-The client attempts to group them into a single Langfuse session by passing
-`metadata.langfuse_session_id` in the OpenRouter request body (the documented
-Langfuse SDK convention).
+Each council run makes 7 HTTP calls (3 Stage 1 + 3 Stage 2 + 1 chairman), and until
+July they arrived at Langfuse ungrouped. The README used to describe this as
+"best-effort, not guaranteed" after testing 7 propagation patterns in May.
 
-**However**: empirical testing on 2026-05-15 across 7 different propagation
-patterns (body field variants `langfuse_session_id` / `session_id` / `sessionId`,
-plus HTTP headers `X-Langfuse-Session-Id` / `langfuse-session-id`) showed
-**inconsistent server-side mapping** by the OpenRouter → Langfuse plugin for
-raw HTTP gateways. Session linkage is therefore **best-effort, not guaranteed**.
+**It was not best-effort — it was the wrong field.** All seven variants put the value
+inside `metadata`, and OpenRouter never reads `metadata` for session grouping. The
+documented Broadcast fields are **top-level** in the request body:
 
-**Authoritative correlation channel**: the client-side observability module
-(`council/observability.py`) emits a structured JSON line on **stderr** for every
-API call, including a per-run `trace_id` that uniquely groups the 7 calls of
-a single council run. Grep for `trace_id` in application logs to definitively
-correlate calls regardless of Langfuse-side session mapping.
+```json
+{ "user": "...", "session_id": "...", "trace": { "trace_id", "trace_name", "span_name" } }
+```
 
-**Future direction**: when self-hosted Langfuse is operational (e.g. via
-`langfuse-devops-lab`), the session linkage will be re-implemented as a direct
-Langfuse SDK side-channel, bypassing the OpenRouter plugin mapping ambiguity.
+Sessions now group correctly. The lesson outlived the bug: seven experiments that all
+vary the same wrong dimension look like thorough investigation and are not.
+
+### What is still not covered
+
+- **No self-hosted Langfuse ingestion.** Traces reach Langfuse through OpenRouter
+  Broadcast, which requires no code and no dependency — the right trade for a
+  stdlib-only project. A direct SDK integration would mean adding a dependency to
+  gain features this tool does not use.
+- **Telemetry carries no content, by design.** The stderr JSON and the Broadcast
+  fields carry identifiers, costs and timings — never the question or the answers.
+  That is a deliberate limit, enforced by `tests/test_stages.py::TestTelemetryPrivacy`.
 
 ## License
 
