@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from council.config import (
     APP_TITLE,
@@ -47,6 +47,33 @@ class CallResult:
     request_id: str | None = None
 
 
+# The three trace fields OpenRouter Broadcast reads. An allowlist, not a merge:
+# copying a caller's dict wholesale would let it overwrite `model` or `provider`,
+# and `provider` is the privacy guarantee.
+_BROADCAST_FIELDS: Final[tuple[str, ...]] = ("user", "session_id", "trace")
+
+
+def _build_payload(
+    model: str,
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    temperature: float,
+    metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Assembles the request body. PROVIDER_ROUTING is not optional: see config."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "provider": dict(PROVIDER_ROUTING),
+    }
+    for key in _BROADCAST_FIELDS:
+        if metadata and key in metadata:
+            payload[key] = metadata[key]
+    return payload
+
+
 class OpenRouterClient:
     """Stdlib-only OpenRouter chat completions client with retry and schema validation."""
 
@@ -82,18 +109,7 @@ class OpenRouterClient:
         any endpoint serving the model, so a model chosen for its zero-retention
         guarantee could be answered by a provider that retains.
         """
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "provider": dict(PROVIDER_ROUTING),
-        }
-        if metadata:
-            # Allowlist: never let caller-supplied keys reach `model` or `provider`.
-            for key in ("user", "session_id", "trace"):
-                if key in metadata:
-                    payload[key] = metadata[key]
+        payload = _build_payload(model, messages, max_tokens, temperature, metadata)
         start = time.perf_counter()
         last_error: Exception | None = None
 

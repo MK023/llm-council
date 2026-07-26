@@ -7,6 +7,7 @@ import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from council.__main__ import load_env, validate_question
 from council.client import OpenRouterClient
@@ -89,7 +90,13 @@ class TestLoadEnv(unittest.TestCase):
 
     def test_skips_comments_and_blank_lines(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
-            f.write("# this is a comment\n")
+            # I dati vecchi non contenevano "=", quindi cadevano sulla guardia
+            # successiva senza mai raggiungere la logica dei commenti. Ora il commento
+            # contiene "=", ma il test resta verde anche togliendo la guardia: e'
+            # l'allowlist a scartare `#OPENROUTER_API_KEY`. Il test verifica il
+            # comportamento osservabile (i commenti non entrano nell'ambiente), non
+            # la singola riga di codice — che e' difesa in profondita', non isolabile.
+            f.write("#OPENROUTER_API_KEY=valore-commentato\n")
             f.write("\n")
             f.write("LANGFUSE_HOST=yes\n")
             temp_path = Path(f.name)
@@ -97,18 +104,28 @@ class TestLoadEnv(unittest.TestCase):
             os.environ.pop("LANGFUSE_HOST", None)
             load_env(temp_path)
             self.assertEqual(os.environ.get("LANGFUSE_HOST"), "yes")
+            self.assertIsNone(os.environ.get("#OPENROUTER_API_KEY"))
+            self.assertNotEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-commentato")
         finally:
             temp_path.unlink()
 
     def test_does_not_override_existing(self) -> None:
-        """Existing env vars must not be overridden by .env (CLI/CI flags win)."""
-        os.environ["PRESET"] = "from_environment"
+        """An injected environment (Doppler, CI) must win over a file on disk.
+
+        This test used to use a key called PRESET, which is not on the allowlist —
+        so `load_env` discarded it before ever reaching `setdefault`, and the test
+        passed even with the precedence inverted. It verified nothing. Verified by
+        mutation on 2026-07-26: swapping `setdefault` for direct assignment left it
+        green. It now uses a real allowlisted key, and `patch.dict` restores the
+        environment instead of leaking a variable into the rest of the suite.
+        """
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
-            f.write("PRESET=from_file\n")
+            f.write("OPENROUTER_API_KEY=from_file\n")
             temp_path = Path(f.name)
         try:
-            load_env(temp_path)
-            self.assertEqual(os.environ.get("PRESET"), "from_environment")
+            with patch.dict(os.environ, {"OPENROUTER_API_KEY": "from_environment"}, clear=False):
+                load_env(temp_path)
+                self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "from_environment")
         finally:
             temp_path.unlink()
 

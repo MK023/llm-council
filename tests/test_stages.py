@@ -8,11 +8,14 @@ selection — plus one privacy invariant: telemetry must never carry content.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from council.client import CallResult, OpenRouterError
 from council.config import CHAIRMAN_MODEL, MAX_TOKENS_STAGE_3, VOTER_MODELS
+from council.observability import TraceContext, emit, hash_question
 from council.stages import (
     _build_metadata,
     stage1_responses,
@@ -35,9 +38,17 @@ def _client(*side_effect: object) -> MagicMock:
 
 class TestStage1(unittest.TestCase):
     def test_every_voter_is_asked(self) -> None:
+        """Assert on what was ASKED, not on the labels we attached afterwards.
+
+        The old version only checked `[r.model for r in results]`, and those labels
+        come from the loop variable — not from the client. Calling one voter three
+        times left it green. Verified by mutation 2026-07-26.
+        """
         client = _client(*[_result("a"), _result("b"), _result("c")])
-        results = stage1_responses(client, "domanda")
-        self.assertEqual([r.model for r in results], list(VOTER_MODELS))
+        stage1_responses(client, "domanda")
+        asked = [call.args[0] for call in client.call.call_args_list]
+        self.assertEqual(asked, list(VOTER_MODELS))
+        self.assertEqual(client.call.call_count, len(VOTER_MODELS))
 
     def test_one_failing_voter_does_not_abort_the_council(self) -> None:
         """Graceful degradation: 2/3 voters is a weaker council, not a dead one."""
@@ -135,7 +146,8 @@ class TestTelemetryPrivacy(unittest.TestCase):
         meta = _build_metadata("x" * 300, stage="stage_1")
         assert meta is not None
         self.assertEqual(len(meta["session_id"]), 128)
-        self.assertLessEqual(len(meta["user"]), 128)
+        # `user` non si asserisce: e' una costante di 16 caratteri, il cap sarebbe
+        # una difesa per un caso impossibile e l'assertion non potrebbe mai fallire.
 
     def test_question_never_reaches_the_metadata(self) -> None:
         client = _client(*[_result("a")] * 3)
@@ -152,6 +164,48 @@ class TestTelemetryPrivacy(unittest.TestCase):
             metadata = call.kwargs.get("metadata") or {}
             self.assertNotIn(answer, str(metadata))
             self.assertNotIn(self.SECRET, str(metadata))
+
+
+class TestTraceRecordCarriesHashNotContent(unittest.TestCase):
+    """`hash_question` promises "correlation without leaking question content".
+
+    It computed the hash and nobody emitted it: the promise existed, the mechanism
+    did not. These tests pin both halves — the hash IS in the record, the question
+    is NOT — so the field cannot quietly go missing again.
+    """
+
+    QUESTION = "dovrei accettare l offerta di lavoro a Milano"
+
+    def _emitted(self, trace: TraceContext) -> str:
+        with patch("council.observability._LOGGER") as logger:
+            emit("query_start", trace)
+            return logger.info.call_args[0][0]
+
+    def test_the_hash_reaches_the_log_record(self) -> None:
+        trace = TraceContext(question_hash=hash_question(self.QUESTION))
+        record = json.loads(self._emitted(trace))
+        self.assertEqual(record["question_hash"], hash_question(self.QUESTION))
+
+    def test_the_question_itself_never_reaches_the_log_record(self) -> None:
+        trace = TraceContext(question_hash=hash_question(self.QUESTION))
+        self.assertNotIn(self.QUESTION, self._emitted(trace))
+
+    def test_the_hash_is_a_stable_sha256_prefix(self) -> None:
+        """Correlation across runs is the point: a random id would not do.
+
+        Pinned to the algorithm, not to itself: comparing the function against a second
+        call to the same function is tautological — it would pass even if the function
+        returned a constant.
+        """
+        expected = hashlib.sha256(self.QUESTION.encode()).hexdigest()[:8]
+        actual = hash_question(self.QUESTION)
+        self.assertEqual(actual, expected)
+        self.assertEqual(len(actual), 8)
+
+    def test_different_questions_hash_differently(self) -> None:
+        first = hash_question("una domanda")
+        second = hash_question("un altra domanda")
+        self.assertNotEqual(first, second)
 
 
 if __name__ == "__main__":

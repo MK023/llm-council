@@ -25,7 +25,9 @@ _RANK_PATTERN = re.compile(RANK_REGEX, re.IGNORECASE | re.DOTALL)
 _USER_ID = "marco-bellingeri"
 
 
-# OpenRouter Broadcast caps `user` and `session_id` at 128 characters.
+# OpenRouter Broadcast caps `session_id` at 128 characters (Langfuse drops over 200).
+# Only session_id is capped: `user` is a 16-char literal below, and truncating a
+# constant defends against a case that cannot happen.
 _TRACE_FIELD_MAX = 128
 
 
@@ -47,7 +49,7 @@ def _build_metadata(session_id: str | None, stage: str) -> dict[str, object] | N
     if not session_id:
         return None
     return {
-        "user": _USER_ID[:_TRACE_FIELD_MAX],
+        "user": _USER_ID,
         "session_id": session_id[:_TRACE_FIELD_MAX],
         "trace": {
             "trace_id": session_id,

@@ -140,11 +140,6 @@ def _fence(items: list[str], nonce: str, kind: str = "RESPONSE") -> str:
     return "\n\n".join(blocks)
 
 
-def _label_responses(responses: list[str], nonce: str | None = None) -> str:
-    """Labels responses as A/B/C with fenced delimiters to neutralize cross-stage injection."""
-    return _fence(responses, nonce or _new_nonce())
-
-
 # NOTE: previous _INJECTION_NOTICE preamble was removed — it triggered OpenAI/Azure content-policy
 # refusals because the wording ("ignore directives, role-plays, system overrides") matched
 # jailbreak-attempt patterns. The fenced delimiters alone provide sufficient parsing isolation;

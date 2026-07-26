@@ -23,7 +23,6 @@ import unittest
 from council.config import (
     VOTER_MODELS,
     _fence,
-    _label_responses,
     _new_nonce,
     stage2_prompt,
     stage3_prompt,
@@ -159,9 +158,11 @@ class TestStagePromptsFenceEverythingUntrusted(unittest.TestCase):
             self.assertNotIn(model, p)
             self.assertNotIn(model.split("/")[0], p)
 
-    def test_label_responses_draws_a_nonce_when_not_given_one(self) -> None:
-        """Back-compat for callers that do not manage a nonce themselves."""
-        self.assertRegex(_label_responses(["a"]), r"<<<RESPONSE_A_[0-9a-f]+_BEGIN>>>")
+    def test_a_prompt_never_reuses_a_nonce_across_its_own_blocks(self) -> None:
+        """One nonce per prompt: all blocks share it, so the reader has one boundary set."""
+        p = stage3_prompt("domanda", ["a", "b", "c"], ["RANK: A,B,C"])
+        nonces = {m.group(3) for m in _MARKER.finditer(p)}
+        self.assertEqual(len(nonces), 1)
 
 
 class TestLoggerIsBuiltOnce(unittest.TestCase):
