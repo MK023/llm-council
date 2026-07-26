@@ -38,7 +38,9 @@ class TestNonce(unittest.TestCase):
     """The nonce is the defence; everything else is formatting."""
 
     def test_nonce_differs_between_draws(self) -> None:
-        self.assertNotEqual(_new_nonce(), _new_nonce())
+        """Every draw must be unique: a repeated nonce is a reusable forgery."""
+        draws = [_new_nonce() for _ in range(50)]
+        self.assertEqual(len(set(draws)), len(draws), "collisione fra nonce")
 
     def test_nonce_is_long_enough_to_be_unguessable(self) -> None:
         # 8 bytes of entropy: not brute-forceable inside a single answer.
