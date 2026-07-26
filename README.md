@@ -86,9 +86,14 @@ Declared before the thresholds, so they can be defended rather than lowered.
 | **Security taxonomy** | OWASP Top 10 for LLM Applications **2025** — mapped in [SECURITY.md](SECURITY.md), with MITRE ATLAS techniques alongside. The mapping is itself tested (`tests/test_security_doc.py`): every category needs an explicit verdict and every cited test must exist. Minimum tests present: provider routing (ZDR fail-closed), telemetry carries no content, model output never executed. |
 | **Flaky policy** | None quarantined today. When it happens: the test leaves the required checks, stays in the suite, and is tracked in `FLAKY.md` with id, owner and ticket. A quarantined test is debt, not a passing test. |
 
-**Not covered, on purpose:** no HTTP-level integration test — the suite never touches the
-network. A weekly scheduled E2E against the live API is the declared gap; until then, a
-model that starts refusing is caught by running the council, not by CI.
+**Live E2E, weekly.** `.github/workflows/e2e.yml` runs one real council on a schedule and
+fails if the exit code is not 0 — including **3**, the degraded run. That is the whole point:
+a voter that starts refusing produces a usable answer and a quiet 3, which is how a broken
+voter stayed hidden for two months. Costs ~$0.013 per run. Never triggered by `pull_request`:
+the repo is public and secrets must not reach a fork's workflow.
+
+The unit suite still never touches the network — this is the one exception, and it lives on
+a schedule instead of in the PR loop so it can never slow down the development cycle.
 
 ## Pipeline level
 

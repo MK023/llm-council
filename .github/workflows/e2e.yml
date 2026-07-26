@@ -1,0 +1,70 @@
+# E2E settimanale contro l'API vera. È l'unico test che tocca la rete.
+#
+# PERCHÉ ESISTE: la suite unitaria non può accorgersi che un modello ha smesso di
+# rispondere. È già successo due volte — DeepSeek a maggio, Qwen a luglio — e in
+# entrambi i casi il difetto è emerso ESEGUENDO, mesi dopo, non dai test.
+# Questo job è la sentinella che quei due mesi non li fa ripetere.
+#
+# SICUREZZA: mai su `pull_request`. Il repo è pubblico e i secret non arrivano
+# alle PR da fork; peggio, un workflow modificato in una PR potrebbe esfiltrare
+# la chiave. Solo cron e avvio manuale, entrambi sul ramo principale.
+name: E2E settimanale
+
+on:
+  schedule:
+    # Lunedì 06:00 UTC. Un fallimento resta visibile tutta la settimana.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-run:
+    name: Council contro l'API vera
+    runs-on: ubuntu-latest
+    # Il cron gira solo sul repo di origine, mai sui fork che clonano il progetto.
+    if: github.repository == 'MK023/llm-council'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # Domanda in ITALIANO e lunga, di proposito: è la forma che ha fatto cadere
+      # due voter diversi. Un prompt corto in inglese non riprodurrebbe il difetto.
+      - name: Esegui il council
+        id: council
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          QUESTION: >-
+            Valuta in modo argomentato questo compromesso di ingegneria del software:
+            conviene introdurre un livello di astrazione in più per rendere un
+            componente sostituibile, oppure accettare l'accoppiamento e rimandare
+            l'astrazione al momento in cui serve davvero una seconda implementazione?
+            Considera manutenibilità, costo cognitivo e rischio di astrazione
+            prematura, e concludi con una raccomandazione pratica.
+        run: |
+          set +e
+          python -m council "$QUESTION"
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      # Il contratto d'uscita è il test. 3 = degradato: la risposta esiste ma un
+      # votante è caduto, ed è ESATTAMENTE il caso che questo job deve scoprire.
+      # Passare un 3 in silenzio significherebbe riaprire il buco che ha nascosto
+      # il bug del reasoning per due mesi.
+      - name: Verifica il contratto d'uscita
+        env:
+          CODE: ${{ steps.council.outputs.exit_code }}
+        run: |
+          case "$CODE" in
+            0) echo "Council completo: 3 votanti su 3." ;;
+            3) echo "::error::Run DEGRADATA: un votante non ha risposto o il ranking non è parsabile. Controlla ERROR SUMMARY sopra — di solito è un modello che ha iniziato a rifiutare o a esaurire i token ragionando." ; exit 1 ;;
+            2) echo "::error::Configurazione: chiave assente o invalida." ; exit 1 ;;
+            4) echo "::error::Tetto token superato." ; exit 1 ;;
+            *) echo "::error::Uno stadio è fallito del tutto (exit $CODE)." ; exit 1 ;;
+          esac
