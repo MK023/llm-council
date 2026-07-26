@@ -76,6 +76,11 @@ def load_env(env_path: Path) -> None:
         )
     for line in resolved.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
+        # Difesa in profondita', deliberatamente ridondante: l'allowlist scarterebbe
+        # comunque `#OPENROUTER_API_KEY`, che non e' una chiave valida. Per questo la
+        # sola guardia sui commenti non e' isolabile in un test — rimuoverla non cambia
+        # alcun comportamento osservabile finche' l'allowlist regge. Resta perche' e'
+        # l'allowlist a poter cambiare, e allora questa riga tornerebbe l'unica difesa.
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)  # maxsplit=1 preserves '=' in value

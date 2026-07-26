@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from council.client import OpenRouterClient, OpenRouterError
+from council.config import MAX_RESPONSE_BYTES
 
 
 def _mock_response(
@@ -129,6 +130,26 @@ class TestResponseValidation(unittest.TestCase):
         with self.assertRaises(OpenRouterError) as ctx:
             self.client.call("test/model", self.messages, max_tokens=10)
         self.assertIn("exceeded", str(ctx.exception).lower())
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_the_cap_is_applied_when_reading_not_after(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """The defence has two halves, and only one was tested.
+
+        A MagicMock returns its payload whatever argument `read()` gets, so the test
+        above passes even with an unbounded `resp.read()` — the size check catches it
+        afterwards, but the bytes are already in memory. Against a compromised endpoint
+        streaming gigabytes, "read everything then complain" is not a defence.
+        This asserts the bounded read itself. Verified by mutation 2026-07-26.
+        """
+        mock_urlopen.return_value = _mock_response(b"x" * (300 * 1024))
+        with self.assertRaises(OpenRouterError):
+            self.client.call("test/model", self.messages, max_tokens=10)
+        read_call = mock_urlopen.return_value.read.call_args
+        self.assertTrue(read_call.args, "read() chiamata senza limite di byte")
+        self.assertLessEqual(read_call.args[0], MAX_RESPONSE_BYTES + 1)
 
 
 class TestEdgeCases(unittest.TestCase):

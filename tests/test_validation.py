@@ -90,7 +90,13 @@ class TestLoadEnv(unittest.TestCase):
 
     def test_skips_comments_and_blank_lines(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
-            f.write("# this is a comment\n")
+            # I dati vecchi non contenevano "=", quindi cadevano sulla guardia
+            # successiva senza mai raggiungere la logica dei commenti. Ora il commento
+            # contiene "=", ma il test resta verde anche togliendo la guardia: e'
+            # l'allowlist a scartare `#OPENROUTER_API_KEY`. Il test verifica il
+            # comportamento osservabile (i commenti non entrano nell'ambiente), non
+            # la singola riga di codice — che e' difesa in profondita', non isolabile.
+            f.write("#OPENROUTER_API_KEY=valore-commentato\n")
             f.write("\n")
             f.write("LANGFUSE_HOST=yes\n")
             temp_path = Path(f.name)
@@ -98,6 +104,8 @@ class TestLoadEnv(unittest.TestCase):
             os.environ.pop("LANGFUSE_HOST", None)
             load_env(temp_path)
             self.assertEqual(os.environ.get("LANGFUSE_HOST"), "yes")
+            self.assertIsNone(os.environ.get("#OPENROUTER_API_KEY"))
+            self.assertNotEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-commentato")
         finally:
             temp_path.unlink()
 

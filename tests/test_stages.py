@@ -37,9 +37,17 @@ def _client(*side_effect: object) -> MagicMock:
 
 class TestStage1(unittest.TestCase):
     def test_every_voter_is_asked(self) -> None:
+        """Assert on what was ASKED, not on the labels we attached afterwards.
+
+        The old version only checked `[r.model for r in results]`, and those labels
+        come from the loop variable — not from the client. Calling one voter three
+        times left it green. Verified by mutation 2026-07-26.
+        """
         client = _client(*[_result("a"), _result("b"), _result("c")])
-        results = stage1_responses(client, "domanda")
-        self.assertEqual([r.model for r in results], list(VOTER_MODELS))
+        stage1_responses(client, "domanda")
+        asked = [call.args[0] for call in client.call.call_args_list]
+        self.assertEqual(asked, list(VOTER_MODELS))
+        self.assertEqual(client.call.call_count, len(VOTER_MODELS))
 
     def test_one_failing_voter_does_not_abort_the_council(self) -> None:
         """Graceful degradation: 2/3 voters is a weaker council, not a dead one."""
@@ -137,7 +145,8 @@ class TestTelemetryPrivacy(unittest.TestCase):
         meta = _build_metadata("x" * 300, stage="stage_1")
         assert meta is not None
         self.assertEqual(len(meta["session_id"]), 128)
-        self.assertLessEqual(len(meta["user"]), 128)
+        # `user` non si asserisce: e' una costante di 16 caratteri, il cap sarebbe
+        # una difesa per un caso impossibile e l'assertion non potrebbe mai fallire.
 
     def test_question_never_reaches_the_metadata(self) -> None:
         client = _client(*[_result("a")] * 3)
