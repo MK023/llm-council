@@ -24,14 +24,35 @@ _RANK_PATTERN = re.compile(RANK_REGEX, re.IGNORECASE | re.DOTALL)
 _USER_ID = "marco-bellingeri"
 
 
+# OpenRouter Broadcast caps `user` and `session_id` at 128 characters.
+_TRACE_FIELD_MAX = 128
+
+
 def _build_metadata(session_id: str | None, stage: str) -> dict[str, object] | None:
-    """Constructs the metadata payload for Langfuse session linkage via OpenRouter."""
+    """Builds the OpenRouter Broadcast trace fields that Langfuse consumes.
+
+    These are TOP-LEVEL fields of the request body — `user`, `session_id`, `trace` —
+    not entries inside `metadata`.
+
+    This is the fix to a two-month-old bug. From May 2026 the code sent
+    `metadata: {langfuse_session_id, langfuse_user_id, langfuse_tags}`, and the traces
+    arrived at Langfuse but were never grouped into a session. The project notes record
+    "7 patterns tested, none consistent" — none of the seven was right, because they all
+    varied the contents of `metadata`, which OpenRouter never reads for this purpose.
+    The names and the position were both wrong.
+
+    Source: OpenRouter docs, Broadcast — Settings > Observability.
+    """
     if not session_id:
         return None
     return {
-        "langfuse_session_id": session_id,
-        "langfuse_user_id": _USER_ID,
-        "langfuse_tags": ["council", stage],
+        "user": _USER_ID[:_TRACE_FIELD_MAX],
+        "session_id": session_id[:_TRACE_FIELD_MAX],
+        "trace": {
+            "trace_id": session_id,
+            "trace_name": "llm-council",
+            "span_name": stage,
+        },
     }
 
 

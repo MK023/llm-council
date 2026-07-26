@@ -80,18 +80,36 @@ class TestProviderRoutingInPayload(unittest.TestCase):
         self.assertIs(self._sent_payload(mock_urlopen)["provider"]["allow_fallbacks"], False)
 
     @patch("council.client.urllib.request.urlopen")
-    def test_metadata_does_not_displace_provider(self, mock_urlopen: MagicMock) -> None:
-        """Langfuse metadata and routing must coexist — one must not overwrite the other."""
+    def test_trace_fields_do_not_displace_provider(self, mock_urlopen: MagicMock) -> None:
+        """Broadcast trace fields and routing must coexist — neither overwrites the other."""
         mock_urlopen.return_value = _mock_response(_OK_BODY)
         self.client.call(
             "test/model",
             self.messages,
             max_tokens=10,
-            metadata={"langfuse_session_id": "abc"},
+            metadata={"session_id": "abc", "user": "marco", "trace": {"trace_id": "abc"}},
         )
         payload = self._sent_payload(mock_urlopen)
         self.assertIn("provider", payload)
-        self.assertEqual(payload["metadata"]["langfuse_session_id"], "abc")
+        self.assertEqual(payload["session_id"], "abc")
+        self.assertEqual(payload["user"], "marco")
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_caller_cannot_override_provider_through_trace_fields(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        """The allowlist is a guardrail: `provider` carries the privacy guarantee."""
+        mock_urlopen.return_value = _mock_response(_OK_BODY)
+        self.client.call(
+            "test/model",
+            self.messages,
+            max_tokens=10,
+            metadata={"provider": {"zdr": False}, "model": "evil/model", "session_id": "ok"},
+        )
+        payload = self._sent_payload(mock_urlopen)
+        self.assertIs(payload["provider"]["zdr"], True)
+        self.assertEqual(payload["model"], "test/model")
+        self.assertEqual(payload["session_id"], "ok")
 
 
 class TestRoutingConstant(unittest.TestCase):
