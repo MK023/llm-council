@@ -1,0 +1,19 @@
+# Gitleaks configuration. The default rules are extended, never replaced: this file
+# adds one exception and inherits everything else.
+#
+# The exception is the SonarQube Cloud project key. It has the entropy of an API key
+# and the generic `generic-api-key` rule flags it, but it is not a secret: it is the
+# project's public identifier, present in the URL and in the README badge. The real
+# secret is SONAR_TOKEN, which lives in GitHub Secrets and never touches the repo.
+#
+# The exception matches the exact string, not the file: if a real token ever landed
+# in sonar-project.properties, gitleaks would still catch it.
+[extend]
+useDefault = true
+
+# Singular `[allowlist]`, not `[[allowlists]]`. The newer plural syntax is silently
+# ignored by the older binary bundled inside gitleaks-action — the same config passed
+# locally and left CI red on marcobellingeri.dev. This form is understood by both.
+[allowlist]
+description = "The SonarQube Cloud project key is public, not an API key"
+regexes = ['''MK023_llm-council''']

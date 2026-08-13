@@ -19,6 +19,39 @@ classifiers = [
 
 # No runtime dependencies — stdlib-only by design (`urllib` for HTTP, `unittest` for tests)
 
+# Mutation testing. Coverage is a floor; this is the metric that asks whether the
+# assertions on the covered lines are worth anything. Runs weekly, never on the PR
+# path — see .github/workflows/mutation.yml for the schedule and the threshold.
+[tool.mutmut]
+source_paths = ["council/"]
+# __main__.py is copied but not mutated. Measured 2026-08-13 over all of council/:
+# 47.5%, and ~70% of the survivors lived in this one file — mutmut rewrites every
+# string literal three ways (XX-wrapped, lowercased, uppercased), and __main__.py
+# is the presentation layer: report headers, error summaries, help text. Nothing a
+# sensible assertion would catch, and gating on that number buries the signal from
+# the protocol underneath the printing.
+#
+# It keeps the 100% coverage floor and the Sonar gate; what it does not get is a
+# mutation gate. `observability.py` stays IN: its output is the telemetry-privacy
+# claim ("never the question or the answers"), which is worth mutating.
+#
+# Narrowing `source_paths` to single files instead would break the run — mutmut
+# copies only what it walks, so `council/__main__.py` would vanish from the tree
+# and every test importing it would fail to collect. `do_not_mutate` copies.
+do_not_mutate = ["council/__main__.py"]
+# The whole suite MINUS the four files that never import `council`: they cannot
+# kill one of its mutants, so including them only adds runtime and drags their
+# filesystem assumptions into the tree mutmut copies. Ignoring by name rather than
+# listing what to run means a new test file joins the mutation run automatically —
+# a list of includes would silently leave it out.
+pytest_add_cli_args_test_selection = [
+    "tests/",
+    "--ignore=tests/test_packaging.py",
+    "--ignore=tests/test_security_doc.py",
+    "--ignore=tests/test_mutation_gate.py",
+    "--ignore=tests/test_pin_dev_deps.py",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
