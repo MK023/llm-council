@@ -178,10 +178,27 @@ class TestTheOutputFormatContract(unittest.TestCase):
     PATTERN = re.compile(RANK_REGEX, re.IGNORECASE | re.DOTALL)
 
     def test_the_requested_format_is_the_one_the_parser_accepts(self) -> None:
-        """The example in the prompt, fed straight to the regex that reads the reply."""
+        """The prompt's OWN example, fed to the regex that reads the reply.
+
+        The previous version asserted the two halves separately — that the prompt
+        contained `RANK: <best>,<middle>,<worst>` and that the regex matched
+        `RANK: A,B,C` — which are different strings. It pinned the mismatch instead of
+        catching it, and on 2026-08-14 mistral-small answered `RANK: <A,B,C>`: it copied
+        the angle brackets the template showed it. The assertion now takes the example
+        OUT of the prompt, so the two can never drift apart again.
+        """
         prompt = stage2_prompt("domanda", ["a", "b", "c"])
-        self.assertIn("RANK: <best>,<middle>,<worst>", prompt)
-        self.assertIsNotNone(self.PATTERN.search("RANK: A,B,C\nREASON: una ragione"))
+        esempio = next(line for line in prompt.splitlines() if line.startswith("RANK:"))
+        self.assertIsNotNone(
+            self.PATTERN.search(esempio),
+            f"il parser non accetta l'esempio che il prompt mostra: {esempio!r}",
+        )
+
+    def test_the_example_ranking_is_not_the_identity_order(self) -> None:
+        """An example anchors. A,B,C would be indistinguishable from a real consensus."""
+        prompt = stage2_prompt("domanda", ["a", "b", "c"])
+        esempio = next(line for line in prompt.splitlines() if line.startswith("RANK:"))
+        self.assertNotIn("A,B,C", esempio)
 
     def test_the_prompt_asks_for_a_reason_line(self) -> None:
         self.assertIn("REASON:", stage2_prompt("domanda", ["a", "b", "c"]))
