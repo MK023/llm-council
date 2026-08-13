@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -55,6 +57,10 @@ DEFAULT_CANDIDATES = (
 )
 
 _GENERATION_URL = "https://openrouter.ai/api/v1/generation?id="
+# Il record di generation compare con qualche secondo di ritardo rispetto alla
+# risposta: la prima run in CI e' morta su un 404 che da terminale, minuti dopo,
+# rispondeva. Attese in secondi fra i tentativi.
+_LOOKUP_BACKOFF = (2, 4, 8, 16)
 
 
 def generation_stats(generation_id: str, api_key: str) -> dict[str, object]:
@@ -64,25 +70,42 @@ def generation_stats(generation_id: str, api_key: str) -> dict[str, object]:
     body: on 2026-08-14 Novita served kimi-k2-0905 with 800 reasoning tokens and an
     empty `content`, and the client reported `reasoning=absent` because it could only
     see the body. `native_tokens_reasoning` is the field that tells the truth.
+
+    The record is not queryable the instant the completion returns — the first CI run
+    died on a 404 while the same id answered fine from a terminal minutes later. So it
+    is retried, and a lookup that never lands returns empty rather than killing the
+    probe: this reports on the measurement, it is not the measurement.
     """
     req = urllib.request.Request(
         _GENERATION_URL + generation_id, headers={"Authorization": f"Bearer {api_key}"}
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read()).get("data", {})
+    for pausa in _LOOKUP_BACKOFF:
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read()).get("data", {})
+        except urllib.error.HTTPError as exc:
+            if exc.code != 404:
+                print(f"  (lookup {generation_id}: HTTP {exc.code})", file=sys.stderr)
+                return {}
+        except urllib.error.URLError as exc:
+            print(f"  (lookup {generation_id}: {exc.reason})", file=sys.stderr)
+            return {}
+        time.sleep(pausa)
+    print(f"  (lookup {generation_id}: ancora 404 dopo i tentativi)", file=sys.stderr)
+    return {}
 
 
-def probe(models: tuple[str, ...], api_key: str) -> int:
+def probe(models: tuple[str, ...], api_key: str, max_tokens: int = MAX_TOKENS_STAGE_1) -> int:
     client = OpenRouterClient(api_key)
     messages = [{"role": "user", "content": QUESTION}]
     header = "{:38s} {:14s} {:8s} {:>7s} {:>7s} {:>10s}".format(
         "model", "provider", "finish", "compl", "reason", "cost $"
     )
-    print(f"budget: max_tokens={MAX_TOKENS_STAGE_1}\n{header}\n{'-' * len(header)}")
+    print(f"budget: max_tokens={max_tokens}\n{header}\n{'-' * len(header)}")
     truncated = 0
     for model in models:
         try:
-            result = client.call(model, messages, MAX_TOKENS_STAGE_1)
+            result = client.call(model, messages, max_tokens)
         except OpenRouterError as exc:
             print(f"{model:38s} RIFIUTATO/FALLITO: {str(exc)[:80]}")
             truncated += 1
@@ -112,7 +135,10 @@ def main(argv: list[str]) -> int:
     if not api_key:
         print("OPENROUTER_API_KEY assente", file=sys.stderr)
         return 2
-    return probe(tuple(argv) or DEFAULT_CANDIDATES, api_key)
+    # Il budget si prova PRIMA di adottarlo: misurare a 800 dice chi tronca oggi,
+    # misurare al budget nuovo dice se il budget nuovo basta. Serve il secondo.
+    budget = int(os.environ.get("PROBE_MAX_TOKENS") or MAX_TOKENS_STAGE_1)
+    return probe(tuple(argv) or DEFAULT_CANDIDATES, api_key, budget)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,10 @@ on:
         description: "Modelli separati da spazio (vuoto = la lista di default nello script)"
         required: false
         type: string
+      max_tokens:
+        description: "Budget da provare (vuoto = MAX_TOKENS_STAGE_1)"
+        required: false
+        type: string
 
 permissions: {}
 
@@ -49,9 +53,14 @@ jobs:
       - name: Valida l'elenco dei modelli
         env:
           MODELS: ${{ inputs.models }}
+          MAX_TOKENS: ${{ inputs.max_tokens }}
         run: |
           if [ -n "$MODELS" ] && ! printf '%s' "$MODELS" | grep -qE '^[A-Za-z0-9/._:-]+( [A-Za-z0-9/._:-]+)*$'; then
             echo "::error::elenco modelli non valido: ammessi solo slug separati da spazio"
+            exit 1
+          fi
+          if [ -n "$MAX_TOKENS" ] && ! printf '%s' "$MAX_TOKENS" | grep -qE '^[0-9]{2,5}$'; then
+            echo "::error::max_tokens non valido: solo cifre"
             exit 1
           fi
 
@@ -59,6 +68,7 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           MODELS: ${{ inputs.models }}
+          PROBE_MAX_TOKENS: ${{ inputs.max_tokens }}
         run: |
           read -r -a candidati <<< "$MODELS"
           python scripts/probe_models.py "${candidati[@]}"
