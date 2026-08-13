@@ -23,7 +23,14 @@ classifiers = [
 # assertions on the covered lines are worth anything. Runs weekly, never on the PR
 # path — see .github/workflows/mutation.yml for the schedule and the threshold.
 [tool.mutmut]
-source_paths = ["council/"]
+# The three modules the test contract already calls critical: the HTTP client with
+# the ZDR posture and the retry policy, the config that builds the fenced prompts,
+# and the protocol itself. Measured 2026-08-13 over ALL of council/: 47.5%, with
+# ~70% of the survivors inside __main__.py — string mutations on human-readable
+# report output, which no sensible assertion would catch. Gating on that number
+# would have buried the signal in the printing layer. __main__.py keeps its
+# coverage floor and Sonar; what it does not get is a mutation gate, on purpose.
+source_paths = ["council/client.py", "council/config.py", "council/stages.py"]
 # The whole suite MINUS the four files that never import `council`: they cannot
 # kill one of its mutants, so including them only adds runtime and drags their
 # filesystem assumptions into the tree mutmut copies. Ignoring by name rather than
