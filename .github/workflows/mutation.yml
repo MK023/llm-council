@@ -72,11 +72,15 @@ jobs:
       - name: Surviving mutants to the job summary
         if: always()
         run: |
+          mutmut results > survivors.txt || echo '(mutmut results produced nothing)' > survivors.txt
+          # Also to the log: the summary is not fetchable through the API, so a
+          # summary-only report is readable in the browser and nowhere else.
+          cat survivors.txt
           {
             echo '## Mutants left alive'
             echo
             echo '```'
-            mutmut results || echo '(mutmut results produced nothing)'
+            cat survivors.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
