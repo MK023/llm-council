@@ -59,8 +59,17 @@ VOTER_MODELS: Final[tuple[str, ...]] = (
 #                        $15/M out, so raising max_tokens would cost more than the run
 #
 # Europe is absent for rate limits, not for privacy: OpenRouter's shared quota to Mistral
-# is exhausted. A BYOK Mistral key removes the ceiling and brings Voter EU back — worth
-# doing, since two of three voters are Chinese houses today.
+# is exhausted. A BYOK Mistral key would remove the ceiling and bring Voter EU back, and
+# two of three voters being Chinese houses is a real weakness in a council whose whole
+# value is divergence.
+#
+# Decided 2026-08-14: it stays as it is. The only BYOK key available here is Anthropic,
+# and Anthropic cannot take the seat — not for lack of quality, but because whoever
+# orchestrates the council does not sit in it (Claude Code is the daily driver on this
+# repo, so an Anthropic voter would be ranking answers written under its own supervision).
+# That exclusion is the same rule that keeps the chairman out of the voter pool, and
+# trading it for geographic diversity would buy one kind of independence by spending
+# another. So the gap is left open and named, not closed with the wrong key.
 
 # Chairman lives OUTSIDE the voter pool to avoid self-favor bias in synthesis, and
 # comes from a fourth house. Anthropic is excluded everywhere — whoever orchestrates
