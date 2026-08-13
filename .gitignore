@@ -14,3 +14,6 @@ legacy/
 
 # Artefatti di coverage: generati in locale e in CI, mai committati
 coverage.xml
+
+# Grafo di graphify: rigenerabile in locale, non e' sorgente
+graphify-out/

@@ -227,6 +227,24 @@ class TestReasoningModelDiagnosis(unittest.TestCase):
         self.assertNotIn("Reasoning model", msg)
         self.assertIn("no usable", msg)
 
+    def test_unnamed_empty_content_carries_its_evidence(self) -> None:
+        """The sentinel that fails without evidence costs a week: it fires once a week."""
+        msg = self._call_expecting_error(
+            {
+                "choices": [
+                    {
+                        "message": {"content": []},
+                        "finish_reason": "stop",
+                        "native_finish_reason": "content_filter",
+                    }
+                ]
+            }
+        )
+        self.assertIn("finish_reason='stop'", msg)
+        self.assertIn("native_finish_reason='content_filter'", msg)
+        self.assertIn("content_type=list", msg)
+        self.assertIn("reasoning=absent", msg)
+
 
 class TestNoReasoningModelOnTheChair(unittest.TestCase):
     """Guard for the rule written in config.py: the chairman must be reliable.
