@@ -103,8 +103,16 @@ a schedule instead of in the PR loop so it can never slow down the development c
 **And a watcher on the watcher.** A red run on Actions says the sentinel *failed*. Nothing
 says the sentinel never *ran* — and GitHub disables scheduled workflows after 60 days of
 repository inactivity, silently. The job posts a check-in to a Sentry cron monitor
-(`llm-council-e2e`), which alarms on the **absence** of the check-in. The check-in never
-fails the build: a guard that kills what it guards is worse than no guard.
+(`llm-council-e2e`), the kind of alarm that fires on the **absence** of a signal. The
+check-in never fails the build: a guard that kills what it guards is worse than no guard.
+
+**Honest limit, verified 2026-08-13:** that monitor exists with the right schedule and
+receives its check-ins, but it is **not alerting**. Sentry includes exactly one cron monitor
+per plan and the seat is taken by another project; monitors past the quota are registered and
+left inactive until reserved quota or a pay-as-you-go budget activates them. So the missed-run
+case — the one this is for — is currently *instrumented but not alarmed*. Written down rather
+than quietly implied, because a monitor everyone believes in and that never fires is worse than
+no monitor at all.
 
 ## Pipeline level
 
