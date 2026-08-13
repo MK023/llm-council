@@ -186,6 +186,40 @@ class TestExitContract(unittest.TestCase):
         self.assertIn("ABORT", err)
 
 
+class TestTheReportCarriesTheLookupKey(unittest.TestCase):
+    """A degraded answer looks like a good one, so the id must ride on the good line.
+
+    A mangled token or a truncated thought passes `_validate_response` and reaches the
+    report as an ordinary reply. If the completion id only appeared in error messages,
+    the single case that needs `GET /api/v1/generation?id=…` would be the one case
+    without it — and the provider that served it would stay unknowable.
+    """
+
+    def setUp(self) -> None:
+        self.env = patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_the_generation_id_is_printed_next_to_a_good_answer(self) -> None:
+        answered = CallResult(
+            content="risposta",
+            cost=0.001,
+            tokens=100,
+            latency_s=1.0,
+            attempts=1,
+            generation_id="gen-abc123",
+        )
+        stage1 = [StageResult(model=m, result=answered) for m in VOTER_MODELS]
+        code, out, _ = _run(["domanda"], stage1_responses=stage1)
+        self.assertEqual(code, 0)
+        self.assertIn("gen=gen-abc123", out)
+
+    def test_nothing_is_printed_when_the_id_is_absent(self) -> None:
+        """No empty `gen=` on a line that already carries four numbers."""
+        _, out, _ = _run(["domanda"])
+        self.assertNotIn("gen=", out)
+
+
 class TestArgParsing(unittest.TestCase):
     def test_question_is_positional(self) -> None:
         self.assertEqual(parse_args(["la mia domanda"]).question, "la mia domanda")

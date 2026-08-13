@@ -45,6 +45,16 @@ class CallResult:
     latency_s: float
     attempts: int
     request_id: str | None = None
+    # The completion id from the RESPONSE BODY (`gen-...`), which the OpenAPI spec
+    # marks required on `ChatResult`. It is the documented key for
+    # `GET /api/v1/generation?id=…`, whose `data.provider_name` says which provider
+    # actually served the answer — the only way to investigate a degraded one.
+    #
+    # Not the same thing as `request_id` above, which comes from an HTTP header:
+    # the E2E run of 2026-08-14 returned NEITHER `x-request-id` nor
+    # `openrouter-request-id`, so that field was null on 7 records out of 7. The
+    # unit tests never caught it because they mock headers the real API does not send.
+    generation_id: str | None = None
 
 
 # The three trace fields OpenRouter Broadcast reads. An allowlist, not a merge:
@@ -124,6 +134,7 @@ class OpenRouterClient:
                     latency_s=round(time.perf_counter() - start, 2),
                     attempts=attempt,
                     request_id=request_id,
+                    generation_id=data.get("id"),
                 )
             except urllib.error.HTTPError as exc:
                 # Retry only on rate-limit + server-side transient; fail fast on 4xx auth/bad-request
@@ -223,6 +234,10 @@ class OpenRouterClient:
                 f"(finish_reason={choice.get('finish_reason')!r}, "
                 f"native_finish_reason={choice.get('native_finish_reason')!r}, "
                 f"content_type={type(content).__name__}, "
-                f"reasoning={'present' if message.get('reasoning') else 'absent'})",
+                f"reasoning={'present' if message.get('reasoning') else 'absent'}, "
+                # The lookup key for `GET /api/v1/generation?id=…`: this branch is the
+                # one with no name yet, so the next reader needs to be able to ask
+                # OpenRouter which provider served it.
+                f"generation_id={data.get('id')!r})",
                 request_id=request_id,
             )
