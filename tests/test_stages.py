@@ -14,9 +14,17 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from council.client import CallResult, OpenRouterError
-from council.config import CHAIRMAN_MODEL, MAX_TOKENS_STAGE_3, VOTER_MODELS
+from council.config import (
+    CHAIRMAN_MODEL,
+    MAX_TOKENS_STAGE_1,
+    MAX_TOKENS_STAGE_2,
+    MAX_TOKENS_STAGE_3,
+    VOTER_MODELS,
+)
 from council.observability import TraceContext, emit, hash_question
 from council.stages import (
+    RankingResult,
+    StageResult,
     _build_metadata,
     stage1_responses,
     stage2_rankings,
@@ -27,6 +35,16 @@ from council.stages import (
 def _result(content: str) -> CallResult:
     return CallResult(
         content=content, cost=0.001, tokens=100, latency_s=1.0, attempts=1, request_id="req-1"
+    )
+
+
+def _stage_result(content: str) -> StageResult:
+    return StageResult(model="voter/one", result=_result(content))
+
+
+def _ranking_result(content: str) -> RankingResult:
+    return RankingResult(
+        voter="voter/one", result=_result(content), rank=("A", "B", "C"), reason="", is_valid=True
     )
 
 
@@ -206,6 +224,113 @@ class TestTraceRecordCarriesHashNotContent(unittest.TestCase):
         first = hash_question("una domanda")
         second = hash_question("un altra domanda")
         self.assertNotEqual(first, second)
+
+
+class TestWhatEachStageActuallyAsks(unittest.TestCase):
+    """The arguments the stages hand the client — budgets, messages, span names.
+
+    Everything below ran under the existing suite without a single assertion on the
+    value produced: 81 mutants survived across the three stages on 2026-08-13. A stage
+    that sends the stage-2 budget on stage 1, or labels every span `stage_1`, is a
+    working council with unusable telemetry and truncated answers.
+    """
+
+    def test_stage1_sends_the_question_as_the_user_turn(self) -> None:
+        client = _client(*[_result("a")] * 3)
+        stage1_responses(client, "domanda")
+        self.assertEqual(
+            client.call.call_args_list[0].args[1], [{"role": "user", "content": "domanda"}]
+        )
+
+    def test_stage1_uses_its_own_token_budget(self) -> None:
+        client = _client(*[_result("a")] * 3)
+        stage1_responses(client, "domanda")
+        self.assertEqual(client.call.call_args_list[0].args[2], MAX_TOKENS_STAGE_1)
+
+    def test_stage2_uses_its_own_token_budget(self) -> None:
+        """Stage 2 returns three letters and a sentence; a stage-1 budget just costs more."""
+        client = _client(*[_result("RANK: A,B,C")] * 3)
+        stage2_rankings(client, "domanda", [])
+        self.assertEqual(client.call.call_args_list[0].args[2], MAX_TOKENS_STAGE_2)
+
+    def test_every_voter_ranks_the_same_prompt(self) -> None:
+        """Blind ranking only means anything if the three read an identical brief."""
+        client = _client(*[_result("RANK: A,B,C")] * 3)
+        stage2_rankings(client, "domanda", [_stage_result("alpha")])
+        prompts = {c.args[1][0]["content"] for c in client.call.call_args_list}
+        self.assertEqual(len(prompts), 1)
+
+    def test_stage2_ranks_the_stage1_answers_not_the_question_alone(self) -> None:
+        client = _client(*[_result("RANK: A,B,C")] * 3)
+        stage2_rankings(client, "domanda", [_stage_result("risposta-alfa")])
+        self.assertIn("risposta-alfa", client.call.call_args_list[0].args[1][0]["content"])
+
+    def test_stage3_reads_both_the_answers_and_the_rankings(self) -> None:
+        """Until 2026-07-26 the rankings reached the chairman raw; both must be there."""
+        client = _client(_result("finale"))
+        stage3_synthesis(
+            client,
+            "domanda",
+            [_stage_result("risposta-alfa")],
+            [_ranking_result("RANK: A,B,C\nREASON: perché sì")],
+        )
+        prompt = client.call.call_args.args[1][0]["content"]
+        self.assertIn("risposta-alfa", prompt)
+        self.assertIn("perché sì", prompt)
+
+    def test_each_stage_labels_its_own_span(self) -> None:
+        """One span name for all three stages is telemetry that cannot be read."""
+        spans = []
+        for run in (
+            lambda c: stage1_responses(c, "d", session_id="s"),
+            lambda c: stage2_rankings(c, "d", [], session_id="s"),
+            lambda c: stage3_synthesis(c, "d", [], [], session_id="s"),
+        ):
+            client = _client(*[_result("RANK: A,B,C")] * 3)
+            run(client)
+            spans.append(client.call.call_args_list[0].kwargs["metadata"]["trace"]["span_name"])
+        self.assertEqual(spans, ["stage_1", "stage_2", "stage_3_chairman"])
+
+    def test_without_a_session_no_trace_fields_are_sent(self) -> None:
+        client = _client(*[_result("a")] * 3)
+        stage1_responses(client, "domanda")
+        self.assertIsNone(client.call.call_args_list[0].kwargs["metadata"])
+
+    def test_the_trace_id_keeps_the_full_session_while_session_id_is_capped(self) -> None:
+        """The cap protects the Broadcast field; the trace id is ours and stays whole."""
+        meta = _build_metadata("s" * 300, stage="stage_1")
+        assert meta is not None
+        self.assertEqual(len(meta["trace"]["trace_id"]), 300)
+        self.assertEqual(meta["trace"]["trace_name"], "llm-council")
+
+    def test_a_failed_voter_leaves_an_empty_seat_not_a_fake_answer(self) -> None:
+        """The sentinel is what the report and the token ceiling both count on."""
+        client = _client(*[OpenRouterError("down")] * 3)
+        failed = stage1_responses(client, "domanda")[0].result
+        self.assertEqual(failed.content, "[VOTER_FAILED]")
+        self.assertEqual(failed.cost, 0.0)
+        self.assertEqual(failed.tokens, 0)
+        self.assertEqual(failed.attempts, 0)
+        self.assertIsNone(failed.request_id)
+
+    def test_the_reason_is_stripped_of_its_surrounding_whitespace(self) -> None:
+        client = _client(*[_result("RANK: A,B,C\nREASON:   spaziata   ")] * 3)
+        self.assertEqual(stage2_rankings(client, "domanda", [])[0].reason, "spaziata")
+
+    def test_an_unparseable_ranking_says_which_check_rejected_it(self) -> None:
+        client = _client(*[_result("nessun rank qui")] * 3)
+        self.assertEqual(
+            stage2_rankings(client, "domanda", [])[0].error,
+            "regex_no_match (Stage 2 output did not match RANK regex)",
+        )
+
+    def test_a_failed_ranking_carries_the_api_error_and_no_rank(self) -> None:
+        client = _client(*[OpenRouterError("429 exhausted")] * 3)
+        ranking = stage2_rankings(client, "domanda", [])[0]
+        self.assertIsNone(ranking.rank)
+        self.assertEqual(ranking.reason, "")
+        self.assertFalse(ranking.is_valid)
+        self.assertEqual(ranking.error, "429 exhausted")
 
 
 if __name__ == "__main__":

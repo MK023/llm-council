@@ -87,7 +87,7 @@ Declared before the thresholds, so they can be defended rather than lowered.
 |---|---|
 | **Shape** | **Pyramid.** This is a single process with rich domain logic — the three-stage protocol, the ranking parser, the exit contract. Complexity lives *inside* the units, so the centre of gravity is unit tests. Not a trophy (no composed UI) and not a honeycomb (no service boundaries). |
 | **Coverage floor** | **100%**, lines and branches, blocking. Not a number chased for its own sake: the 17 lines missing at 94% were real untested behaviour — stage 2 total failure, the *second* token-ceiling check, and the fenced-delimiter defence that SECURITY.md claims for LLM01. On ~400 statements with no unreachable branches, 100% is defensible; on a large codebase the rule would go back to *clean as you code*. Still a floor: coverage says which lines run, not whether the assertions are worth anything. |
-| **Mutation** | **Automated and blocking, weekly** — `.github/workflows/mutation.yml`, floor `MUTATION_FLOOR = 55`, declared in one place. First real measurement 2026-08-13: **315 mutants killed out of 568, 55.5%**, with coverage sitting at 100%. That gap is the whole argument for this gate. Mutates `council/` minus `__main__.py`: measured over everything the score was 47.5% and ~70% of the survivors were string rewrites of report text in the printing layer, which no sensible assertion would catch. Never on the PR path — a slow gate in the PR loop is a gate people learn to ignore. Manual mutation stays the habit on every PR touching `client/config/stages`; the weekly run is the net, not the practice. |
+| **Mutation** | **Automated and blocking, weekly** — `.github/workflows/mutation.yml`, floor `MUTATION_FLOOR = 80`, declared in one place. Measured 2026-08-13: **463 mutants killed out of 568, 81.5%**, with coverage sitting at 100%. It opened the same day at 55.5% — 100% coverage and 253 survivors, which is the whole argument for this gate: every line ran, and almost half of them could change without a single assertion noticing. The 148 mutants killed since died to assertions on produced values (the HTTP request's headers and body, the retry backoff, the log record's fields, each stage's token budget and span name), not to any change in `council/`. Mutates `council/` minus `__main__.py`: measured over everything the score was 47.5% and ~70% of the survivors were string rewrites of report text in the printing layer, which no sensible assertion would catch. Never on the PR path — a slow gate in the PR loop is a gate people learn to ignore. Manual mutation stays the habit on every PR touching `client/config/stages`; the weekly run is the net, not the practice. |
 | **Security taxonomy** | OWASP Top 10 for LLM Applications **2025** — mapped in [SECURITY.md](SECURITY.md), with MITRE ATLAS techniques alongside. The mapping is itself tested (`tests/test_security_doc.py`): every category needs an explicit verdict and every cited test must exist. Minimum tests present: provider routing (ZDR fail-closed), telemetry carries no content, model output never executed. |
 | **Flaky policy** | None quarantined today. When it happens: the test leaves the required checks, stays in the suite, and is tracked in `FLAKY.md` with id, owner and ticket. A quarantined test is debt, not a passing test. |
 
@@ -129,7 +129,7 @@ What each gate blocks on, because a gate without a written policy is a future
 | **Secret scan** (gitleaks) | any finding — zero tolerance | one allowlisted string, the Sonar project key, which is public by construction |
 | **Tests** (3.10/3.11/3.12) | any failure | includes the stdlib-only invariant, see below |
 | **Coverage** | below 100% lines+branches; below 90% on `client`/`config`/`stages` | a floor, not a quality claim |
-| **Mutation score** | below 55% — **weekly, off the PR path** | the claim the coverage number cannot make |
+| **Mutation score** | below 80% — **weekly, off the PR path** | the claim the coverage number cannot make |
 | **Dependency review** | a vulnerable dependency entering the diff | nothing to review today, which is the point |
 | **SonarQube Cloud** | quality gate red | zero suppressed rules |
 | **Workflow lint** (zizmor) | any finding | it is what keeps the SHA pins pinned |
@@ -146,6 +146,15 @@ The dev tools are a different story and are treated like one. CI pulls ruff, cov
 zizmor from PyPI on every run, and mutmut and pytest once a week. They are pinned **by hash**,
 not by version — a version pin still trusts the registry to serve the same bytes under that
 name. The hashes are generated from the PyPI API by `scripts/pin_dev_deps.py`, never typed.
+
+That pin has a maintenance cost, and it is declared rather than discovered later. Dependabot
+watches the Actions and **not** those two files: it knows how to raise a version and not how
+to regenerate a hash, so each bump PR would fail on a mismatch whose message names the symptom
+instead of the missing step. Bumps here are manual, through the script. What that buys is a
+registry that cannot serve different bytes under the same version; what it costs is that a CVE
+in ruff, coverage, zizmor or mutmut waits until someone looks. Those are build-time tools on a
+repo with no runtime dependencies and nothing published — the exposure is a linter on a runner,
+not a chain reaching a user. It is the right trade only while both halves stay true.
 
 Still deliberately absent: **SBOM and signed attestation**. Nothing is published and no
 artifact is distributed — an SBOM would list the empty set and a signature would sign it.
