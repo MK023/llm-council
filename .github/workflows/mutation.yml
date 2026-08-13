@@ -87,12 +87,34 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The names alone say WHERE a mutant lives, never WHAT it changed — and the
+      # name is all a reader gets, because mutmut cannot run on an Apple x86_64
+      # (libcst ships no wheel), so nobody can ask it locally. Without the diff the
+      # only way to write the assertion that kills a survivor is to guess which of
+      # the ~20 mutations of that function this one is. The evidence costs seconds
+      # here and saves a dispatch cycle per guess.
+      - name: The surviving diffs, not just their names
+        if: always()
+        run: |
+          grep -oE '[A-Za-z_][A-Za-z0-9_.]*__mutmut_[0-9]+' survivors.txt | sort -u > names.txt || true
+          : > mutation-survivor-diffs.txt
+          while read -r name; do
+            {
+              echo "=== $name ==="
+              mutmut show "$name" 2>&1 || echo '(mutmut show produced nothing)'
+              echo
+            } >> mutation-survivor-diffs.txt
+          done < names.txt
+          cat mutation-survivor-diffs.txt
+
       - name: Keep the raw stats
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mutation-stats
-          path: mutants/mutmut-cicd-stats.json
+          path: |
+            mutants/mutmut-cicd-stats.json
+            mutation-survivor-diffs.txt
           if-no-files-found: warn
 
       # The gate. Fails on a score below the floor, and equally on the two ways a
