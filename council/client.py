@@ -213,4 +213,16 @@ class OpenRouterClient:
                     "model supports it, or use a non-reasoning model for this seat.",
                     request_id=request_id,
                 )
-            raise OpenRouterError("Response message has no usable 'content'", request_id=request_id)
+            # Last branch: 200 OK, no answer, and no cause we have a name for yet.
+            # On 2026-08-10 the weekly sentinel died here (moonshotai/kimi-k2-0905) and
+            # left nothing to diagnose with — the message described the hole, not its
+            # shape. Carry the fields that tell the next reader which hole it was:
+            # a truncation, a provider returning content as a list, a silent stop.
+            raise OpenRouterError(
+                "Response message has no usable 'content' "
+                f"(finish_reason={choice.get('finish_reason')!r}, "
+                f"native_finish_reason={choice.get('native_finish_reason')!r}, "
+                f"content_type={type(content).__name__}, "
+                f"reasoning={'present' if message.get('reasoning') else 'absent'})",
+                request_id=request_id,
+            )
