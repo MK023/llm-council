@@ -1,4 +1,22 @@
-# Le uniche dipendenze del progetto sono le GitHub Actions stesse (stdlib-only altrove).
+# Dependabot watches the GitHub Actions and nothing else, on purpose.
+#
+# Runtime dependencies: none. `pyproject.toml` declares an empty set and
+# `tests/test_packaging.py` keeps it empty, so there is no pip ecosystem to watch
+# on the shipped side.
+#
+# Dev tooling (`requirements-dev.txt`, `requirements-mutation.txt`) is deliberately
+# OUT. Those files are installed with `pip install --require-hashes`, and Dependabot
+# raises the version without regenerating the hashes — so every bump PR it opened
+# would fail on a hash mismatch, with an error naming the symptom and not the missing
+# step. Bumps here are manual and go through:
+#
+#   python scripts/pin_dev_deps.py ruff==X.Y.Z coverage==X.Y.Z zizmor==X.Y.Z > requirements-dev.txt
+#
+# The cost is stated rather than hidden: a CVE in ruff, coverage, zizmor or mutmut
+# sits here until someone looks. They are build-time tools on a repo with no runtime
+# dependencies and no published artifact, so that exposure is a linter running on a
+# runner — not a supply chain reaching a user. Revisit if either of those stops being
+# true (a published wheel, a dev tool that touches secrets).
 version: 2
 updates:
   - package-ecosystem: "github-actions"

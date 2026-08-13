@@ -131,7 +131,9 @@ class TestEmittedRecord(unittest.TestCase):
 
 class TestTraceContextDefaults(unittest.TestCase):
     def test_each_context_gets_its_own_trace_id(self) -> None:
-        self.assertNotEqual(TraceContext().trace_id, TraceContext().trace_id)
+        """A shared default would collapse every run into one trace."""
+        drawn = [TraceContext().trace_id for _ in range(50)]
+        self.assertEqual(len(set(drawn)), len(drawn))
 
     def test_the_trace_id_is_a_bare_uuid_hex(self) -> None:
         """No dashes: it is copied into `session_id`, which OpenRouter caps at 128."""

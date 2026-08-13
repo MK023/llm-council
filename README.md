@@ -147,6 +147,15 @@ zizmor from PyPI on every run, and mutmut and pytest once a week. They are pinne
 not by version — a version pin still trusts the registry to serve the same bytes under that
 name. The hashes are generated from the PyPI API by `scripts/pin_dev_deps.py`, never typed.
 
+That pin has a maintenance cost, and it is declared rather than discovered later. Dependabot
+watches the Actions and **not** those two files: it knows how to raise a version and not how
+to regenerate a hash, so each bump PR would fail on a mismatch whose message names the symptom
+instead of the missing step. Bumps here are manual, through the script. What that buys is a
+registry that cannot serve different bytes under the same version; what it costs is that a CVE
+in ruff, coverage, zizmor or mutmut waits until someone looks. Those are build-time tools on a
+repo with no runtime dependencies and nothing published — the exposure is a linter on a runner,
+not a chain reaching a user. It is the right trade only while both halves stay true.
+
 Still deliberately absent: **SBOM and signed attestation**. Nothing is published and no
 artifact is distributed — an SBOM would list the empty set and a signature would sign it.
 A motivated Level 1 is professional; a cargo-cult Level 4 is theatre.
