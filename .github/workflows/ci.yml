@@ -1,5 +1,7 @@
 # CI workflow — defensive: no use of untrusted event payloads in run: commands.
 # Only safe inputs: matrix.python-version (controlled by this file) and static strings.
+# The two references to github.event.pull_request live in `if:` expressions, which the
+# runner evaluates itself — they never reach a shell.
 name: CI
 
 on:
@@ -8,13 +10,17 @@ on:
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+# Deny by default, grant per job. A workflow-level `contents: read` is handed to every
+# job including the ones that never read the repo; an empty default makes each grant
+# below a deliberate line someone had to write.
+permissions: {}
 
 jobs:
   test:
     name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -30,16 +36,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Verify no external runtime dependencies (stdlib-only)
-        run: |
-          test ! -f requirements.txt || (echo "requirements.txt found — project should remain stdlib-only" && exit 1)
-
+      # The stdlib-only guard used to live here as `test ! -f requirements.txt` — a file
+      # this project would never create, since its manifest is pyproject.toml. It now
+      # lives in tests/test_packaging.py, where it reads the manifest that actually
+      # declares dependencies, and runs on every developer's machine too.
       - name: Run unit tests
         run: python -m unittest discover tests/ -v
 
   lint:
     name: Lint (ruff)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -51,18 +59,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ruff
-        run: pip install ruff==0.15.9
+      - name: Install dev tools
+        run: pip install --require-hashes -r requirements-dev.txt
 
       - name: Ruff check
-        run: ruff check council/ tests/
+        run: ruff check council/ tests/ scripts/
 
       - name: Ruff format check
-        run: ruff format --check council/ tests/
+        run: ruff format --check council/ tests/ scripts/
 
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,8 +84,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install coverage
-        run: pip install coverage==7.13.4
+      - name: Install dev tools
+        run: pip install --require-hashes -r requirements-dev.txt
 
       - name: Run tests under coverage
         run: python -m coverage run -m unittest discover tests/
@@ -91,9 +101,60 @@ jobs:
       - name: Coverage floor (critical modules)
         run: python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # gitleaks-action calls GET /repos/{owner}/{repo}/pulls/{n}/commits to know what
+      # to scan on pull_request events. Without this the call returns 403 and the job
+      # dies on EVERY PR — a failure already paid for once on marcobellingeri.dev.
+      pull-requests: read
+    # Secrets do not reach Dependabot's PRs, so the action cannot post its summary and
+    # the job would sit red forever, blocking every bump. The full-history scan on each
+    # push to main still covers whatever a bump merges.
+    #
+    # The PR AUTHOR is what is tested, not `github.actor`: `actor` is whoever triggered
+    # the event and changes on every push to the branch (an `update-branch` click makes
+    # it a human, silently reopening a job this line meant to close). On push events the
+    # pull_request context is null, the condition stays true, and the job runs.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # a shallow clone would scan a handful of commits and call it clean
+          persist-credentials: false
+
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action does not pick up .gitleaks.toml on its own: without this line it
+          # runs the default rules and ignores our single exception (the Sonar project
+          # key, which is public by construction and not a secret).
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Only meaningful on a diff, so pull_request only. Today it reviews nothing: the
+    # project has zero runtime dependencies. That is exactly why it is here — it is the
+    # gate that wakes up the day the first one arrives, and the second net behind
+    # tests/test_packaging.py, which fails if pyproject ever declares one.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
   workflow-lint:
     name: Workflow lint (zizmor)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -104,8 +165,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install zizmor
-        run: pip install zizmor==1.25.0
+      - name: Install dev tools
+        run: pip install --require-hashes -r requirements-dev.txt
 
       # Pinning actions to SHAs only lasts if something checks that they stay pinned:
       # a mutable tag can be reintroduced in any future PR without anyone noticing.
@@ -115,6 +176,8 @@ jobs:
   sonar:
     name: SonarQube Cloud
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Due esclusioni, entrambe pagate altrove:
     #  - dependabot: i secret non arrivano alle sue PR, e il job resterebbe rosso
     #    per sempre bloccando i bump (successe sul sito: 7 PR ferme due giorni).
@@ -137,8 +200,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install coverage
-        run: pip install coverage==7.13.4
+      - name: Install dev tools
+        run: pip install --require-hashes -r requirements-dev.txt
 
       # Stessa misura dei gate locali, esportata in Cobertura per Sonar:
       # una sola fonte di verita' sulla coverage, non due numeri diversi.

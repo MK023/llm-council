@@ -17,3 +17,6 @@ coverage.xml
 
 # Grafo di graphify: rigenerabile in locale, non e' sorgente
 graphify-out/
+
+# Albero di lavoro di mutmut: sorgente mutata + cache, rigenerato a ogni run
+mutants/

@@ -19,6 +19,24 @@ classifiers = [
 
 # No runtime dependencies — stdlib-only by design (`urllib` for HTTP, `unittest` for tests)
 
+# Mutation testing. Coverage is a floor; this is the metric that asks whether the
+# assertions on the covered lines are worth anything. Runs weekly, never on the PR
+# path — see .github/workflows/mutation.yml for the schedule and the threshold.
+[tool.mutmut]
+source_paths = ["council/"]
+# The whole suite MINUS the four files that never import `council`: they cannot
+# kill one of its mutants, so including them only adds runtime and drags their
+# filesystem assumptions into the tree mutmut copies. Ignoring by name rather than
+# listing what to run means a new test file joins the mutation run automatically —
+# a list of includes would silently leave it out.
+pytest_add_cli_args_test_selection = [
+    "tests/",
+    "--ignore=tests/test_packaging.py",
+    "--ignore=tests/test_security_doc.py",
+    "--ignore=tests/test_mutation_gate.py",
+    "--ignore=tests/test_pin_dev_deps.py",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"

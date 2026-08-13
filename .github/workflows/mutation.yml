@@ -1,0 +1,94 @@
+# Mutation testing — the gate that asks whether the assertions are worth anything.
+#
+# Coverage on this repo is 100%, which says every line runs during the suite. It
+# does not say a single assertion would notice if that line changed. Mutation
+# testing breaks the code on purpose and fails when the tests stay green.
+#
+# Off the PR path on purpose (testing-pyramid: slow gates go nightly, never in the
+# loop a developer waits on). Weekly rather than nightly because the commit rate
+# here is bursty: a nightly run on an unchanged tree measures the same number over
+# and over. Thursday, so a red mutation run and a red Monday E2E never arrive on
+# the same morning looking like one incident.
+name: Mutation testing
+
+on:
+  schedule:
+    - cron: "0 3 * * 4"
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "Mutation score floor for this run (blank = the declared floor)"
+        required: false
+        type: string
+
+permissions: {}
+
+env:
+  # The declared floor. One number, one place — the gate reads it, the README
+  # quotes it, and raising it is a one-line PR with the score to justify it.
+  MUTATION_FLOOR: "80"
+
+jobs:
+  mutmut:
+    name: Mutation score
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # mutmut forks one child per core and re-runs the suite for every mutant. It
+    # should finish well inside this; the cap is here so a pathological hang costs
+    # an hour of a free runner instead of six.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install mutation tools
+        run: pip install --require-hashes -r requirements-mutation.txt
+
+      # Exits 0 whether mutants survive or not — this step is the measurement,
+      # never the verdict. The verdict is the gate step below.
+      - name: Run mutmut
+        run: mutmut run
+
+      - name: Export stats
+        run: mutmut export-cicd-stats
+
+      # A scheduled job that fails without evidence costs a week, because that is
+      # how long until the next one. The surviving mutants go in the run summary,
+      # so a red build is readable without re-running anything locally.
+      - name: Surviving mutants to the job summary
+        if: always()
+        run: |
+          {
+            echo '## Mutants left alive'
+            echo
+            echo '```'
+            mutmut results || echo '(mutmut results produced nothing)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the raw stats
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-stats
+          path: mutants/mutmut-cicd-stats.json
+          if-no-files-found: warn
+
+      # The gate. Fails on a score below the floor, and equally on the two ways a
+      # mutation run reports nothing while looking successful: zero mutants tried,
+      # or a run cut short. See tests/test_mutation_gate.py.
+      #
+      # The dispatch input goes through env and is quoted, never interpolated into
+      # the shell: workflow_dispatch inputs are attacker-shaped by habit even when
+      # only a maintainer can set them.
+      - name: Mutation gate
+        env:
+          FLOOR: ${{ inputs.threshold || env.MUTATION_FLOOR }}
+        run: python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json "$FLOOR"

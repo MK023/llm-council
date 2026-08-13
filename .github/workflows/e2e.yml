@@ -16,13 +16,14 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 jobs:
   live-run:
     name: Council contro l'API vera
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Il cron gira solo sul repo di origine, mai sui fork che clonano il progetto.
     if: github.repository == 'MK023/llm-council'
     steps:
@@ -68,3 +69,42 @@ jobs:
             4) echo "::error::Tetto token superato." ; exit 1 ;;
             *) echo "::error::Uno stadio è fallito del tutto (exit $CODE)." ; exit 1 ;;
           esac
+
+      # Check-in del cron monitor Sentry (slug: llm-council-e2e).
+      #
+      # Il job rosso su Actions segnala che la sentinella e' FALLITA. Nessuno pero'
+      # si accorge se non parte affatto — e GitHub disabilita gli schedule dopo 60
+      # giorni di inattivita' sul repo, in silenzio. Un cron monitor si allarma
+      # sull'ASSENZA del check-in, che e' l'unico modo di vedere quel caso.
+      #
+      # `monitor_config` fa l'upsert: il monitor nasce da solo al primo check-in, e
+      # la sua schedule sta qui accanto a quella vera sopra — se un giorno cambia il
+      # cron si cambiano insieme, o Sentry grida "missed" ogni settimana.
+      #
+      # L'URL completo (progetto + chiave + slug) sta in un secret, non nel file:
+      # il repo e' pubblico e un URL di check-in leggibile da chiunque permette di
+      # spedire uno stato `ok` falso, che maschererebbe proprio la run mancata che
+      # questo monitor esiste per vedere.
+      #
+      # `exit 0` finale NON e' pigrizia: questo step sorveglia la sentinella, non e'
+      # la sentinella. Se Sentry e' giu' o il secret manca, il verdetto sul council
+      # resta quello dello step sopra — un guardiano che uccide cio' che sorveglia
+      # e' peggio di nessun guardiano.
+      - name: Check-in Sentry (la sentinella e' viva)
+        if: always()
+        env:
+          ESITO: ${{ job.status }}
+          CHECKIN_URL: ${{ secrets.SENTRY_CRON_CHECKIN_URL }}
+        run: |
+          if [ -z "$CHECKIN_URL" ]; then
+            echo "::warning::SENTRY_CRON_CHECKIN_URL assente — check-in saltato"
+            exit 0
+          fi
+          stato=ok
+          [ "$ESITO" = "success" ] || stato=error
+          curl -sS -m 10 -X POST "$CHECKIN_URL" \
+            -H 'Content-Type: application/json' \
+            -d "{\"monitor_config\":{\"schedule\":{\"type\":\"crontab\",\"value\":\"0 6 * * 1\"},\"timezone\":\"UTC\",\"checkin_margin\":60,\"max_runtime\":30},\"status\":\"$stato\"}" \
+            && echo "check-in Sentry: $stato" \
+            || echo "check-in Sentry non riuscito — il verdetto sul council resta valido"
+          exit 0
