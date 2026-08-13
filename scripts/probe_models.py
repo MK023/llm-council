@@ -23,9 +23,17 @@ import json
 import os
 import sys
 import urllib.request
+from pathlib import Path
 
-from council.client import OpenRouterClient, OpenRouterError
-from council.config import MAX_TOKENS_STAGE_1
+# `python scripts/probe_models.py` mette `scripts/` su sys.path, non la radice del
+# repo, quindi `council` non sarebbe importabile. La suite non se ne accorge — pytest
+# la radice ce la mette — e infatti il difetto e' uscito solo lanciando il comando.
+# Meglio qui che in una variabile d'ambiente nel workflow: uno script che funziona
+# solo se qualcun altro prepara il path e' uno script che si rompe alla prima copia.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from council.client import OpenRouterClient, OpenRouterError  # noqa: E402
+from council.config import MAX_TOKENS_STAGE_1  # noqa: E402
 
 # The E2E question: long, Italian, argumentative. Short English probes pass on models
 # that then fail here — that is exactly how kimi-k3 got a seat it could not hold.
