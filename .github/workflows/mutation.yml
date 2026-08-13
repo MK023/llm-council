@@ -27,12 +27,16 @@ env:
   # The declared floor. One number, one place — the gate reads it, the README
   # quotes it, and raising it is a one-line PR with the score to justify it.
   #
-  # 55 because that is what the code measures today: 315 mutants killed out of 568
-  # on the first real run (2026-08-13), 55.5%. Not a target picked from an article
-  # — a floor set under the measurement, so the number can only be defended upward.
-  # Rounded down by half a point on purpose: a floor equal to the current score
-  # turns the next unlucky mutant into a red build for no reason.
-  MUTATION_FLOOR: "55"
+  # 80 because that is what the code measures today: 463 mutants killed out of 568
+  # (2026-08-13), 81.5%. Not a target picked from an article — a floor set under the
+  # measurement, so the number can only be defended upward. Left a point and a half
+  # of slack on purpose: a floor equal to the current score turns the next unlucky
+  # mutant into a red build for no reason.
+  #
+  # It opened at 55 the same day, on 315 kills. The 148 mutants that died between the
+  # two runs died to assertions, not to code changes — the tests were checking that a
+  # line ran, not what it produced. Raised only after the measurement, never before.
+  MUTATION_FLOOR: "80"
 
 jobs:
   mutmut:
