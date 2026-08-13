@@ -1,0 +1,65 @@
+name: Model probe
+
+# Misura dei candidati a un seggio, sul PROMPT VERO e col routing vero.
+#
+# Esiste perche' questo council ha sostituito un voter due volte su una diagnosi
+# sbagliata, e ne ha scelto un terzo su un probe corto che ha superato prima di
+# fallire sul prompt reale. La lezione stava in un commento; ora e' un comando.
+#
+# Gira in CI e non in locale per due motivi: la chiave vive nel secret del
+# repository, e la postazione sta dietro una DMZ.
+#
+# Solo avvio manuale: consuma quota vera e non ha senso su schedule.
+#
+# SICUREZZA: mai su `pull_request`. Il repo e' pubblico, i secret non arrivano alle
+# PR da fork, e un workflow modificato in una PR potrebbe esfiltrare la chiave.
+
+on:
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Modelli separati da spazio (vuoto = la lista di default nello script)"
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  probe:
+    name: Candidati sul prompt vero
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: github.repository == 'MK023/llm-council'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      # L'input di dispatch passa da env e non viene mai interpolato nella shell: gli
+      # input sono attacker-shaped per abitudine anche quando solo un maintainer puo'
+      # impostarli. In piu' e' validato contro un'allowlist prima dell'uso, perche' qui
+      # la divisione in parole serve davvero e una stringa non controllata diventerebbe
+      # argomenti arbitrari.
+      - name: Valida l'elenco dei modelli
+        env:
+          MODELS: ${{ inputs.models }}
+        run: |
+          if [ -n "$MODELS" ] && ! printf '%s' "$MODELS" | grep -qE '^[A-Za-z0-9/._:-]+( [A-Za-z0-9/._:-]+)*$'; then
+            echo "::error::elenco modelli non valido: ammessi solo slug separati da spazio"
+            exit 1
+          fi
+
+      - name: Misura
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          MODELS: ${{ inputs.models }}
+        run: |
+          read -r -a candidati <<< "$MODELS"
+          python scripts/probe_models.py "${candidati[@]}"
+        shell: bash
