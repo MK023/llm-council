@@ -12,11 +12,6 @@
 name: Mutation testing
 
 on:
-  # TEMPORANEO — da rimuovere prima del merge. workflow_dispatch non e' invocabile
-  # finche' il workflow non sta sul branch di default, e la soglia qui sotto non
-  # deve essere un numero inventato: questo trigger serve a misurarla davvero.
-  push:
-    branches: [sec/supply-chain-e-mutation]
   schedule:
     - cron: "0 3 * * 4"
   workflow_dispatch:
@@ -29,11 +24,15 @@ on:
 permissions: {}
 
 env:
-  # PROVVISORIA: 0.1 solo per la run di misura. Il numero vero si mette qui
-  # dopo aver letto lo score reale, nello stesso PR.
   # The declared floor. One number, one place — the gate reads it, the README
   # quotes it, and raising it is a one-line PR with the score to justify it.
-  MUTATION_FLOOR: "0.1"
+  #
+  # 55 because that is what the code measures today: 315 mutants killed out of 568
+  # on the first real run (2026-08-13), 55.5%. Not a target picked from an article
+  # — a floor set under the measurement, so the number can only be defended upward.
+  # Rounded down by half a point on purpose: a floor equal to the current score
+  # turns the next unlucky mutant into a red build for no reason.
+  MUTATION_FLOOR: "55"
 
 jobs:
   mutmut:
