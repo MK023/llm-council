@@ -28,66 +28,97 @@ PROVIDER_ROUTING: Final[dict[str, object]] = {
 # Alibaba and served from Vertex is still an Alibaba voice. Houses are what must
 # differ; the serving provider is a privacy concern, handled by PROVIDER_ROUTING.
 VOTER_MODELS: Final[tuple[str, ...]] = (
-    "deepseek/deepseek-v4-flash",
-    "google/gemini-3.5-flash-lite",
-    "moonshotai/kimi-k2-0905",
+    "mistralai/mistral-small-3.2-24b-instruct",
+    "meta-llama/llama-3.3-70b-instruct",
+    "deepseek/deepseek-chat",
 )
-# Note 2026-05-15: `deepseek/deepseek-r1-0528` was Voter 3 but exhibited a persistent
-# refusal pattern on Italian-language queries (3/4 fails observed). Swapped to Qwen3
-# 235B Thinking — Alibaba multilingual training is more reliable on non-English content.
+
+# THE SEATS WERE REBUILT ON 2026-08-14, AND THIS TIME ON A MEASUREMENT.
 #
-# Note 2026-07-26 — THE ITALIAN BUG WAS NEVER ABOUT ITALIAN.
-# DeepSeek R1 was dropped in May for "refusing Italian queries"; Qwen3 235B replaced it
-# and degraded ~25% on the same queries. Two swaps on one theory. Running the council for
-# real showed the actual cause: both were REASONING models. They spend max_tokens on
-# internal thought and only then write `content` — and an Italian prompt makes them think
-# longer, so they hit the ceiling more often. HTTP 200, empty content, nobody the wiser.
-# The language was a correlate, never the cause. See client.py for the diagnosis.
+# What forced it: an E2E run came back with ALL THREE voters at
+# `finish_reason='length'`. Two of them delivered a truncated answer that the council
+# reported as [OK] — because truncated content is still content, and every check here
+# is about shape. Stage 2 ranked cut-off answers and the chairman synthesised them.
+# The run looked healthy. It had been looking healthy for a while.
 #
-# Consequence for this seat: voters are chosen by whether they ANSWER, not by pedigree.
-# And they are measured with the REAL prompt: kimi-k3 passed a short probe (496 tok) and
-# was picked, then failed on the actual stage-1 prompt, which is far longer. A model that
-# answers a test question is not a model that answers yours.
-# Measured 2026-07-26 against full ZDR with the real Italian prompt at max_tokens=800:
-#   deepseek-v4-flash    123 tok, no reasoning        -> in
-#   gemini-3.5-flash-lite 90 tok, no reasoning        -> in
-#   kimi-k2-0905         715 tok, no reasoning        -> in
-#   qwen3.5 9B/27B/122B, qwen3.6-35b  EMPTY, finish=length (all reasoning models) -> out
-#   mistral-small-4 / 3.2  HTTP 429 rate-limited upstream (not a ZDR problem) -> out
+# What the catalogue says, and what nobody had read: `GET /api/v1/models` carries a
+# `reasoning` object per model, "Omitted for non-reasoning models". Checked against the
+# seats of the day, it said:
+#   deepseek-v4-flash      reasoning present                     -> reasoning model
+#   gemini-3.5-flash-lite  reasoning present, MANDATORY: true    -> cannot be turned off
+#   gpt-5.6-luna (chair)   reasoning present, default_enabled    -> reasoning on the chair
+#   kimi-k2-0905           reasoning OMITTED                     -> not a reasoning model
+# Three of four seats broke the project's own rule, and the rule had been written down
+# in this very file. A doctrine nobody can check is a doctrine that drifts.
 #
-#   kimi-k3 / kimi-k2.6  EMPTY on the real prompt (reasoning) -> out; k3 also costs
-#                        $15/M out, so raising max_tokens would cost more than the run
+# And the fourth seat is the subtler lesson: kimi-k2-0905 is NOT a reasoning model, yet
+# it burned 715-800 tokens on reasoning and returned empty `content`. It was NOVITA
+# serving it that way. The response body carried no `message.reasoning`, so the client
+# printed "reasoning=absent" and pointed away from the cause; only
+# `GET /api/v1/generation` -> `native_tokens_reasoning` told the truth. A model property
+# and a provider behaviour are different things, and only one of them is in the catalogue.
 #
-# Europe is absent for rate limits, not for privacy: OpenRouter's shared quota to Mistral
-# is exhausted. A BYOK Mistral key would remove the ceiling and bring Voter EU back, and
-# two of three voters being Chinese houses is a real weakness in a council whose whole
-# value is divergence.
+# Measured with `scripts/probe_models.py` — the REAL Italian stage-1 prompt, full ZDR
+# routing, max_tokens=1200. `stop` and zero reasoning tokens is the bar:
+#   mistral-small-3.2-24b   stop,  809 tok, 0 reasoning, $0.000167  -> IN  (EU)
+#   llama-3.3-70b-instruct  stop,  850 tok, 0 reasoning, $0.000281  -> IN  (US)
+#   deepseek-chat           stop, 1059 tok, 0 reasoning, $0.000965  -> IN  (CN)
+#   gpt-4.1-mini            stop,  823 tok, 0 reasoning, $0.001344  -> CHAIR (US)
+#   nova-pro-v1             stop,  882 tok, 0 reasoning, $0.002867  -> reserve, 10x the price
+#   qwen3-235b-a22b-2507    length at 1200                          -> out, too verbose
+#   gemma-3-27b-it          length at 1200                          -> out
+#   qwen3-next-80b          length at 1200                          -> out
+#   kimi-k2-0905            length at 1200, 715 reasoning (Novita)  -> out
+#   mistral-large-2512, command-r-08-2024, minimax-01: HTTP 404, "No endpoints found"
+#       -> no ZDR-compliant endpoint under `allow_fallbacks: false`. Fail-closed working
+#          as designed: the privacy posture costs candidates, and that is the trade.
 #
-# Decided 2026-08-14: it stays as it is. The only BYOK key available here is Anthropic,
-# and Anthropic cannot take the seat — not for lack of quality, but because whoever
-# orchestrates the council does not sit in it (Claude Code is the daily driver on this
-# repo, so an Anthropic voter would be ranking answers written under its own supervision).
-# That exclusion is the same rule that keeps the chairman out of the voter pool, and
-# trading it for geographic diversity would buy one kind of independence by spending
-# another. So the gap is left open and named, not closed with the wrong key.
+# EUROPE IS BACK, and not through the BYOK key that was assumed to be the only way.
+# The July note said Mistral was out on rate limits; three weeks of that assumption ended
+# by simply calling a SMALLER Mistral, which answers, complies with ZDR, and is the CHEAPEST
+# of the three. The council now spans EU / US / CN instead of two Chinese houses out of
+# three — bought by measuring, not by buying quota.
+#
+# Cost went DOWN while the answers got longer: stage 1 is ~$0.0014 against ~$0.004 before.
+#
+# HISTORY, kept because it is the reason the bar is what it is:
+# 2026-05-15 `deepseek-r1-0528` dropped for "refusing Italian queries", replaced by Qwen3
+# 235B, which degraded ~25% on the same queries. Two swaps on one theory. Both were
+# REASONING models: they spend max_tokens thinking and only then write `content`, and an
+# Italian prompt makes them think longer. The language was a correlate, never the cause.
+# Then kimi-k3 passed a SHORT probe (496 tok) and failed the real stage-1 prompt. Hence
+# the rule, now enforced by a script instead of a comment: measure with the real prompt,
+# at the real budget, with the real routing — and read `finish_reason`, not just the text.
 
 # Chairman lives OUTSIDE the voter pool to avoid self-favor bias in synthesis, and
 # comes from a fourth house. Anthropic is excluded everywhere — whoever orchestrates
 # the council does not sit in it (Claude Code is the daily driver here).
-# Houses: DeepSeek (CN) / Google (US) / Moonshot (CN), synthesised by OpenAI (US).
+# Houses: Mistral (EU) / Meta (US) / DeepSeek (CN), synthesised by OpenAI (US).
 #
 # THE CHAIRMAN MUST NOT BE A REASONING MODEL. A voter that burns its budget thinking
 # leaves a 2-of-3 council: degraded, still useful. The chairman doing it leaves NO final
-# answer — the whole run is lost. Kimi K3 was the strongest model measured and sits
-# NOWHERE in this council: it reasons, and it emptied its budget on the real stage-1
-# prompt. Its non-reasoning sibling k2-0905 took the voter seat instead. Capability is
-# worth nothing without reliability — least of all on the chair, where the synthesis
-# prompt is the longest of the three stages. This is why "spend on the chairman" has
-# a limit.
-CHAIRMAN_MODEL: Final[str] = "openai/gpt-5.6-luna"
+# answer — the whole run is lost. The synthesis prompt is the longest of the three
+# stages, so the chair is exactly where that failure is most likely.
+#
+# The rule was in this comment from the start and the chair broke it anyway: until
+# 2026-08-14 it was `openai/gpt-5.6-luna`, which the catalogue lists with reasoning
+# `default_enabled: true` — and a measured run showed it spending 51 reasoning tokens.
+# It happened to finish, so nothing ever went red. A rule that only a human can check
+# is a rule that is already broken somewhere; `tests/test_routing.py` now checks it.
+#
+# gpt-4.1-mini replaces it: reasoning omitted in the catalogue, measured `stop` at 823
+# tokens with zero reasoning spend on the real prompt.
+CHAIRMAN_MODEL: Final[str] = "openai/gpt-4.1-mini"
 
-# Stage-specific token limits (raised from V1 after truncation bugs in initial run)
-MAX_TOKENS_STAGE_1: Final[int] = 800
+# Stage-specific token limits.
+#
+# 1400 on stage 1 because the longest answer that FINISHED on the real prompt was 1059
+# tokens (deepseek-chat, measured 2026-08-14) — roughly a third of headroom above it.
+# The previous 800 was set at the ceiling of the day's measurement instead of above it:
+# kimi-k2-0905 had been measured at 715 and given a seat with 11% of margin, and it was
+# one long sentence away from truncation from the first run. A budget equal to the
+# measurement is a budget that fails as soon as the answer is slightly longer.
+MAX_TOKENS_STAGE_1: Final[int] = 1400
 MAX_TOKENS_STAGE_2: Final[int] = 300
 MAX_TOKENS_STAGE_3: Final[int] = 900
 

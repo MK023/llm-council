@@ -16,9 +16,9 @@ Single-model LLM responses suffer from **sycophancy bias** (RLHF tends to optimi
         │
         ▼
 ┌─── STAGE 1 (parallel logic, serial execution) ───┐
-│  Voter 1: deepseek/deepseek-v4-flash             │
-│  Voter 2: google/gemini-3.5-flash-lite           │
-│  Voter 3: moonshotai/kimi-k2-0905                │
+│  Voter 1: mistralai/mistral-small-3.2 (EU)       │
+│  Voter 2: meta-llama/llama-3.3-70b    (US)       │
+│  Voter 3: deepseek/deepseek-chat      (CN)       │
 │  → 3 independent responses (anonymized A/B/C)    │
 └───────────────────────────────────────────────────┘
         │
@@ -30,13 +30,29 @@ Single-model LLM responses suffer from **sycophancy bias** (RLHF tends to optimi
         │
         ▼
 ┌─── STAGE 3 (synthesis by external chairman) ─────┐
-│  Chairman: openai/gpt-5.6-luna                   │
+│  Chairman: openai/gpt-4.1-mini                   │
 │  (different house, never a reasoning model)      │
 │  → final answer + divergence analysis            │
 └───────────────────────────────────────────────────┘
 ```
 
 Chairman lives **outside** the voter pool to avoid self-favor bias in synthesis.
+
+**The seats were rebuilt on 2026-08-14, on a measurement.** An E2E run came back with all
+three voters at `finish_reason='length'`; two of them delivered a truncated answer that the
+council reported as `[OK]`, because truncated content is still content and every check here
+is about shape. The catalogue then said what nobody had read — `GET /api/v1/models` carries
+a `reasoning` object, *"Omitted for non-reasoning models"* — and **three of the four seats
+were reasoning models**, one of them (`gemini-3.5-flash-lite`) with reasoning `mandatory`,
+including the chair the project's own rule forbids. The rule had been written in `config.py`
+from the start; nothing checked it.
+
+The replacements come from `scripts/probe_models.py`: the real Italian prompt, full ZDR
+routing, `max_tokens=1200`, and the bar is `finish_reason: stop` with **zero** reasoning
+tokens. Europe came back in the process — the July note had Mistral out on rate limits, and
+a *smaller* Mistral answers, complies with ZDR, and is the cheapest of the three. The council
+now spans EU/US/CN instead of two Chinese houses out of three, and stage 1 costs **less** than
+before (~$0.0014 against ~$0.004) while producing longer answers.
 
 ## Setup
 
