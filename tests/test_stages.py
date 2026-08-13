@@ -23,6 +23,7 @@ from council.config import (
 )
 from council.observability import TraceContext, emit, hash_question
 from council.stages import (
+    _FAILED_RESULT,
     RankingResult,
     StageResult,
     _build_metadata,
@@ -329,8 +330,98 @@ class TestWhatEachStageActuallyAsks(unittest.TestCase):
         ranking = stage2_rankings(client, "domanda", [])[0]
         self.assertIsNone(ranking.rank)
         self.assertEqual(ranking.reason, "")
-        self.assertFalse(ranking.is_valid)
+        # `assertIs(..., False)` and not `assertFalse`: the latter accepts None, and
+        # `is_valid=None` is exactly the mutation that survived here. A flag read as a
+        # boolean must be pinned to the boolean, or the assertion is half a check.
+        self.assertIs(ranking.is_valid, False)
         self.assertEqual(ranking.error, "429 exhausted")
+        self.assertIs(ranking.result, _FAILED_RESULT)
+
+    def test_stage2_sends_the_prompt_as_a_user_turn(self) -> None:
+        """Full equality on the turn, as stage 1 already had it.
+
+        Reading only `messages[0]["content"]` leaves the role free to be anything:
+        the key and the value `"user"` were both unasserted, and a chat completion
+        with a mangled role is a request the API answers differently or not at all.
+        """
+        client = _client(*[_result("RANK: A,B,C")] * 3)
+        stage2_rankings(client, "domanda", [_stage_result("alfa")])
+        sent = client.call.call_args_list[0].args[1]
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["role"], "user")
+        self.assertEqual(set(sent[0]), {"role", "content"})
+
+    def test_stage3_sends_the_prompt_as_a_user_turn(self) -> None:
+        client = _client(_result("finale"))
+        stage3_synthesis(client, "domanda", [_stage_result("alfa")], [])
+        sent = client.call.call_args.args[1]
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["role"], "user")
+        self.assertEqual(set(sent[0]), {"role", "content"})
+
+    def test_an_unparseable_ranking_leaves_no_half_filled_result(self) -> None:
+        """The no-match branch has its own `rank`/`reason`/`is_valid`, unasserted.
+
+        Only `.error` was checked here, so the other three fields of that branch
+        could hold anything — a rank invented out of a failed parse is exactly the
+        thing this branch exists to prevent.
+        """
+        parsed = _result("nessun rank qui")
+        client = _client(*[parsed] * 3)
+        ranking = stage2_rankings(client, "domanda", [])[0]
+        self.assertIsNone(ranking.rank)
+        self.assertEqual(ranking.reason, "")
+        self.assertIs(ranking.is_valid, False)
+        # The unparsed answer is kept: it is what the report shows when a voter goes off-format.
+        self.assertIs(ranking.result, parsed)
+
+    def test_a_failed_voter_keeps_its_own_name_on_the_result(self) -> None:
+        """Attribution must survive the failure, or the error summary blames the wrong model."""
+        client = _client(_result("a"), OpenRouterError("down"), _result("c"))
+        results = stage1_responses(client, "domanda")
+        self.assertEqual([r.model for r in results], list(VOTER_MODELS))
+        self.assertEqual(results[1].model, VOTER_MODELS[1])
+
+    def test_a_failed_ranking_keeps_its_own_voter(self) -> None:
+        client = _client(_result("RANK: A,B,C"), OpenRouterError("down"), _result("RANK: A,B,C"))
+        rankings = stage2_rankings(client, "domanda", [])
+        self.assertEqual([r.voter for r in rankings], list(VOTER_MODELS))
+        self.assertEqual(rankings[1].voter, VOTER_MODELS[1])
+
+    def test_stage2_asks_every_voter_by_name(self) -> None:
+        """As stage 1 already did. Without it the model argument could be anything."""
+        client = _client(*[_result("RANK: A,B,C")] * 3)
+        stage2_rankings(client, "domanda", [])
+        asked = [c.args[0] for c in client.call.call_args_list]
+        self.assertEqual(asked, list(VOTER_MODELS))
+
+    def test_a_valid_ranking_carries_the_answer_it_parsed(self) -> None:
+        """The rank is derived; the result is the evidence it was derived from."""
+        parsed = _result("RANK: B,A,C\nREASON: perché sì.")
+        client = _client(*[parsed] * 3)
+        self.assertIs(stage2_rankings(client, "domanda", [])[0].result, parsed)
+
+    def test_stage1_carries_the_answer_the_client_returned(self) -> None:
+        answered = _result("la risposta")
+        client = _client(answered, answered, answered)
+        self.assertIs(stage1_responses(client, "domanda")[0].result, answered)
+
+    def test_the_question_reaches_the_ranking_prompt(self) -> None:
+        """Ranking answers without the question is ranking on prose, not on the answer.
+
+        `stage2_prompt(None, responses)` survived: every test read the *responses* out
+        of the prompt and none read the question, so the voters could have been asked
+        to judge three texts with nothing to judge them against.
+        """
+        client = _client(*[_result("RANK: A,B,C")] * 3)
+        stage2_rankings(client, "domanda-unica", [_stage_result("alfa")])
+        self.assertIn("domanda-unica", client.call.call_args_list[0].args[1][0]["content"])
+
+    def test_the_question_reaches_the_synthesis_prompt(self) -> None:
+        """Same hole on the chairman, where the answer the user reads is written."""
+        client = _client(_result("finale"))
+        stage3_synthesis(client, "domanda-unica", [_stage_result("alfa")], [])
+        self.assertIn("domanda-unica", client.call.call_args.args[1][0]["content"])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,21 @@ its level, its formatter, and every field name in the emitted JSON.
 
 A log line nobody asserts on is a log line that can silently change shape, and the
 first person to notice is whoever needs it during an incident.
+
+## The four survivors left here are equivalent mutants — do not chase them
+
+Read from the run diffs on 2026-08-13. Each changes the source and not the behaviour,
+so no assertion can distinguish them and writing one would only pin an implementation
+detail:
+
+| Mutation | Why it behaves identically |
+|---|---|
+| `StreamHandler(sys.stderr)` → `StreamHandler(None)` | `None` is the documented default, and the default is `sys.stderr` |
+| `Formatter("%(message)s")` → `Formatter(None)` | `fmt=None` means `"%(message)s"` |
+| `os.environ.get(..., "INFO")` → `..., "info"` | `.upper()` runs on the result either way |
+| `json.dumps(..., ensure_ascii=False)` → `ensure_ascii=None` | `None` is falsy, and the parameter is read as a boolean |
+
+That is the mutation score's ceiling on this module, not a gap in these tests.
 """
 
 from __future__ import annotations
