@@ -246,16 +246,28 @@ class TestReasoningModelDiagnosis(unittest.TestCase):
         self.assertIn("reasoning=absent", msg)
 
 
-class TestNoReasoningModelOnTheChair(unittest.TestCase):
-    """Guard for the rule written in config.py: the chairman must be reliable.
+class TestNoBudgetBurnerInTheCouncil(unittest.TestCase):
+    """Guard for the rule written in config.py: no seat may burn its budget thinking.
 
-    Kept as an explicit deny-list because no field in the model id marks a reasoning
-    model — it is discovered by running. Adding a name here after a real failure is
-    the point: the list is a record of what we measured, not a prediction.
+    The catalogue DOES mark reasoning models — `GET /api/v1/models` carries a `reasoning`
+    object, "Omitted for non-reasoning models". This test cannot read it: the unit suite
+    never touches the network, by design. So the list stays a deny-list, and it is a
+    record of what was measured rather than a prediction.
+
+    It is not only about the model, either. `kimi-k2-0905` has reasoning OMITTED in the
+    catalogue and still burned 715-800 tokens producing nothing, because NOVITA served it
+    that way — visible only as `native_tokens_reasoning` on `GET /api/v1/generation`.
+    A model property and a provider behaviour are different things, and a seat is lost
+    to either. Hence "budget burner", not "reasoning model".
+
+    Until 2026-08-14 only the CHAIRMAN was checked here, and meanwhile all three voters
+    had drifted onto reasoning models — including one whose reasoning is `mandatory`.
+    A rule enforced on one of four seats is a rule enforced nowhere.
     """
 
-    KNOWN_REASONING_MODELS = frozenset(
+    KNOWN_BUDGET_BURNERS = frozenset(
         {
+            # Reasoning by design, measured empty on the real stage-1 prompt.
             "qwen/qwen3.6-35b-a3b",
             "qwen/qwen3.5-9b",
             "qwen/qwen3.5-27b",
@@ -264,15 +276,31 @@ class TestNoReasoningModelOnTheChair(unittest.TestCase):
             "deepseek/deepseek-r1-0528",
             "moonshotai/kimi-k3",
             "deepseek/deepseek-v4-pro",
+            # Held seats until 2026-08-14. The catalogue lists reasoning on all three;
+            # `gemini-3.5-flash-lite` has it `mandatory: true`, so it cannot be turned off.
+            "deepseek/deepseek-v4-flash",
+            "google/gemini-3.5-flash-lite",
+            "openai/gpt-5.6-luna",
+            # Not a reasoning model. Novita makes it behave like one.
+            "moonshotai/kimi-k2-0905",
         }
     )
 
-    def test_chairman_is_not_a_known_reasoning_model(self) -> None:
+    def test_the_chairman_is_not_a_known_budget_burner(self) -> None:
         self.assertNotIn(
             CHAIRMAN_MODEL,
-            self.KNOWN_REASONING_MODELS,
+            self.KNOWN_BUDGET_BURNERS,
             "a reasoning chairman that runs out of budget loses the entire run",
         )
+
+    def test_no_voter_is_a_known_budget_burner(self) -> None:
+        """The seat that was never checked. All three had drifted."""
+        for voter in VOTER_MODELS:
+            self.assertNotIn(
+                voter,
+                self.KNOWN_BUDGET_BURNERS,
+                f"{voter} was measured spending its budget without answering",
+            )
 
 
 if __name__ == "__main__":
