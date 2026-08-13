@@ -374,6 +374,8 @@ class TestWhatEachStageActuallyAsks(unittest.TestCase):
         self.assertIs(ranking.is_valid, False)
         # The unparsed answer is kept: it is what the report shows when a voter goes off-format.
         self.assertIs(ranking.result, parsed)
+        # And it keeps its name, as the other two branches already did.
+        self.assertEqual(ranking.voter, VOTER_MODELS[0])
 
     def test_a_failed_voter_keeps_its_own_name_on_the_result(self) -> None:
         """Attribution must survive the failure, or the error summary blames the wrong model."""

@@ -27,16 +27,23 @@ env:
   # The declared floor. One number, one place — the gate reads it, the README
   # quotes it, and raising it is a one-line PR with the score to justify it.
   #
-  # 80 because that is what the code measures today: 463 mutants killed out of 568
-  # (2026-08-13), 81.5%. Not a target picked from an article — a floor set under the
-  # measurement, so the number can only be defended upward. Left a point and a half
-  # of slack on purpose: a floor equal to the current score turns the next unlucky
-  # mutant into a red build for no reason.
+  # 85 because that is what the code measures today: 488 mutants killed out of 568,
+  # 85.9%. Not a target picked from an article — a floor set under the measurement, so
+  # the number can only be defended upward. Just under a point of slack on purpose: a
+  # floor equal to the current score turns the next unlucky mutant into a red build for
+  # no reason.
   #
-  # It opened at 55 the same day, on 315 kills. The 148 mutants that died between the
-  # two runs died to assertions, not to code changes — the tests were checking that a
-  # line ran, not what it produced. Raised only after the measurement, never before.
-  MUTATION_FLOOR: "80"
+  # It opened at 55 on 2026-08-13, on 315 kills, then 80. Every mutant that died between
+  # those runs died to an assertion, not to a change in `council/` — the tests were
+  # checking that a line ran, not what it produced. Raised only after the measurement.
+  #
+  # `stages.py` is now at 1 survivor out of 138. What is left lives in the diagnostic
+  # message strings of `client._validate_response` and in the prose of the prompts, plus
+  # four EQUIVALENT mutants in `observability.py` (tabled at the top of
+  # tests/test_observability.py) that no assertion can kill. A floor near 90 would be
+  # bought with assertions on the exact wording of error messages, which is a gate on
+  # prose, not on behaviour. This is roughly where the honest ceiling sits.
+  MUTATION_FLOOR: "85"
 
 jobs:
   mutmut:
@@ -96,7 +103,13 @@ jobs:
       - name: The surviving diffs, not just their names
         if: always()
         run: |
-          grep -oE '[A-Za-z_][A-Za-z0-9_.]*__mutmut_[0-9]+' survivors.txt | sort -u > names.txt || true
+          # Match on "not whitespace", never on an alphabet. mutmut names the mutants of
+          # CLASS METHODS with a U+01C1 separator (council.client.xǁOpenRouterClientǁcall),
+          # so an [A-Za-z0-9_.] class silently truncates them to a name `mutmut show`
+          # cannot resolve — and the methods are where most survivors live. The same
+          # shape of bug as the wheel filter in scripts/pin_dev_deps.py: a pattern that
+          # reads correctly, matches the wrong thing, and reports nothing rather than failing.
+          grep -oE '[^[:space:]]+__mutmut_[0-9]+' survivors.txt | sort -u > names.txt || true
           : > mutation-survivor-diffs.txt
           while read -r name; do
             {
