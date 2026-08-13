@@ -160,6 +160,66 @@ class TestRequestIdCapture(unittest.TestCase):
         self.assertEqual(ctx.exception.request_id, "x-cap")
 
 
+class TestGenerationId(unittest.TestCase):
+    """The completion id from the body — the documented key to ask who served a call.
+
+    OpenRouter's OpenAPI spec marks `id` **required** on `ChatResult` ("Unique completion
+    identifier"), and `GET /api/v1/generation?id=…` returns `data.provider_name`, the name
+    of the provider that actually answered. That lookup is the only way to investigate a
+    reply that arrives well-formed and *wrong* — a mangled token, a quantised endpoint.
+
+    The header `request_id` does not substitute for it: on the live E2E of 2026-08-14
+    OpenRouter sent neither `x-request-id` nor `openrouter-request-id`, and the field was
+    null on 7 telemetry records out of 7. These tests exist because the suite was green
+    through all of that — it mocked headers the real API does not send.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_the_completion_id_is_captured_from_the_body(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {**_OK_BODY, "id": "gen-3bhGkxlo4XFrqiabUM7NDtwDzWwG"}
+        )
+        result = self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(result.generation_id, "gen-3bhGkxlo4XFrqiabUM7NDtwDzWwG")
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_it_does_not_come_from_the_header(self, mock_urlopen: MagicMock) -> None:
+        """Two different identifiers, and only one of them is documented for the lookup."""
+        mock_urlopen.return_value = _mock_response(
+            {**_OK_BODY, "id": "gen-abc"}, headers={"x-request-id": "x-1"}
+        )
+        result = self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(result.generation_id, "gen-abc")
+        self.assertEqual(result.request_id, "x-1")
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_body_without_an_id_leaves_it_none_rather_than_crashing(
+        self, mock_urlopen: MagicMock
+    ) -> None:
+        """The spec says required; a proxy in the middle is not bound by the spec."""
+        mock_urlopen.return_value = _mock_response(_OK_BODY)
+        self.assertIsNone(
+            self.client.call("test/model", self.messages, max_tokens=10).generation_id
+        )
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_the_unnamed_empty_content_error_carries_the_lookup_key(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """That branch is the one with no diagnosis yet: it must be answerable by asking."""
+        mock_urlopen.return_value = _mock_response(
+            {"id": "gen-vuoto", "choices": [{"message": {"content": ""}}]}
+        )
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertIn("generation_id='gen-vuoto'", str(ctx.exception))
+
+
 class TestRetryArithmetic(unittest.TestCase):
     """How many times, how long between, and what the counters end up saying."""
 

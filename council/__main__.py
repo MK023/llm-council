@@ -144,14 +144,20 @@ def _report_stage1(s1: list[StageResult], trace: TraceContext) -> int:
             latency_s=s.result.latency_s,
             attempts=s.result.attempts,
             request_id=s.result.request_id,
+            generation_id=s.result.generation_id,
             error=s.error,
         )
         status = "FAILED" if s.error else "OK"
         print(f"\n--- Response {chr(65 + i)} [{status}] ({s.model}) ---")
         print(f"ERROR: {s.error}" if s.error else s.result.content)
+        # `gen=` is on the SUCCESS line on purpose: a degraded answer — a mangled token,
+        # a truncated thought — passes validation and never reaches an error message.
+        # The id has to be here, next to a response that looks fine, or the one case
+        # that needs `GET /api/v1/generation?id=…` is the one case that cannot use it.
         print(
             f"[tok={s.result.tokens} cost=${s.result.cost:.6f} "
             f"lat={s.result.latency_s}s attempts={s.result.attempts}"
+            f"{f' gen={s.result.generation_id}' if s.result.generation_id else ''}"
             f"{f' req={s.result.request_id}' if s.result.request_id else ''}]"
         )
     return consumed
@@ -181,6 +187,7 @@ def _report_stage2(s2: list[RankingResult], trace: TraceContext) -> int:
             tokens=r.result.tokens,
             latency_s=r.result.latency_s,
             request_id=r.result.request_id,
+            generation_id=r.result.generation_id,
             error=r.error,
         )
         print(f"\n--- Voter {i + 1} [{status}] ({r.voter}) ---")
@@ -334,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         latency_s=s3.latency_s,
         attempts=s3.attempts,
         request_id=s3.request_id,
+        generation_id=s3.generation_id,
     )
     print(f"\n{s3.content}")
     print(f"\n[tok={s3.tokens} cost=${s3.cost:.6f} lat={s3.latency_s}s]")

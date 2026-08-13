@@ -244,6 +244,51 @@ vary the same wrong dimension look like thorough investigation and are not.
   fields carry identifiers, costs and timings — never the question or the answers.
   That is a deliberate limit, enforced by `tests/test_stages.py::TestTelemetryPrivacy`.
 
+### A voter answered, and the answer is degraded
+
+The failure this protocol handles well is the **empty** one — see the reasoning-model
+diagnosis above. The one it does not handle is an answer that arrives complete,
+well-formed, validated, and subtly wrong: a mangled token in the middle of a sentence, a
+thought that stops making sense. It passes every check, because every check is about
+shape. Observed on the live E2E of 2026-08-14, where one voter wrote `rimforKeyare` in
+place of an Italian verb.
+
+**What the documentation says, and what it does not.** OpenRouter's provider routing page
+carries exactly one sentence on the subject — *"Quantized models may exhibit degraded
+performance for certain prompts, depending on the method used"* — and no page describes
+corrupted tokens as a phenomenon or prescribes a response. So attributing any particular
+garbled reply to quantisation is a **hypothesis, not a documented fact**, and this README
+will not pretend otherwise.
+
+**What you can do about it.** Ask who served the answer. The OpenAPI spec marks `id`
+required on `ChatResult`, and `GET /api/v1/generation?id=<id>` returns `data.provider_name`
+— the provider that actually answered, alongside `finish_reason`, `native_finish_reason`,
+`latency` and `is_byok`. The council prints that id on every response line as `gen=…`:
+
+```bash
+curl -H "Authorization: Bearer $OPENROUTER_API_KEY" \
+     "https://openrouter.ai/api/v1/generation?id=gen-3bhGkxlo4XFrqiabUM7NDtwDzWwG"
+```
+
+It is printed next to answers that look **fine**, on purpose. A degraded reply never
+reaches an error message, so an id that only appeared in errors would be missing from the
+single case that needs it.
+
+**A field that was there and empty.** `request_id` comes from an HTTP header, and on that
+same live run OpenRouter sent neither `x-request-id` nor `openrouter-request-id`: null on
+7 telemetry records out of 7. The unit suite was green throughout, because it mocks headers
+the real API does not send. It is kept — the response-size cap trips before the body is
+parsed, and there the header is the only identifier that exists — but it is not the handle
+to reach for.
+
+**What is deliberately not done yet.** `provider.quantizations` would let the routing
+exclude low-precision endpoints. It is **not** set, and that is a decision rather than an
+oversight: this project already routes fail-closed on ZDR (`allow_fallbacks: false`), so
+every additional constraint shrinks the pool of compliant endpoints and turns a quality
+risk into an availability risk — the same wall that keeps Mistral out of the voter pool.
+Measure which providers actually serve these three voters first, then decide. Turning a
+knob because the documentation mentions it is how a routing table becomes cargo cult.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
