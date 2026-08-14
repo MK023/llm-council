@@ -317,13 +317,29 @@ the real API does not send. It is kept — the response-size cap trips before th
 parsed, and there the header is the only identifier that exists — but it is not the handle
 to reach for.
 
-**What is deliberately not done yet.** `provider.quantizations` would let the routing
-exclude low-precision endpoints. It is **not** set, and that is a decision rather than an
-oversight: this project already routes fail-closed on ZDR (`allow_fallbacks: false`), so
-every additional constraint shrinks the pool of compliant endpoints and turns a quality
-risk into an availability risk — the same wall that keeps Mistral out of the voter pool.
-Measure which providers actually serve these three voters first, then decide. Turning a
-knob because the documentation mentions it is how a routing table becomes cargo cult.
+**`provider.quantizations` — measured, and deliberately not set.** The catalogue exposes
+`quantization` per endpoint (`GET /models/{author}/{slug}/endpoints`), and reading it settled
+the question:
+
+| model | endpoints |
+|---|---|
+| `gpt-4.1-mini` (chairman) | OpenAI `unknown` · Azure `unknown` · Azure `unknown` |
+| `deepseek-chat` | StreamLake `unknown` · DeepInfra **`fp4`** · Novita `fp8` |
+| `llama-3.3-70b` | 13 endpoints: `fp8`, `bf16`, `fp16`, 5× `unknown` |
+| `mistral-small-3.2-24b` | DeepInfra `fp8` · Parasail `bf16` · Venice `fp8` |
+
+The field is an **allowlist**, and **every** endpoint of the chairman declares `unknown`. Any
+allowlist leaves the chair with zero compliant endpoints — and under `allow_fallbacks: false`
+that is not a downgrade, it is a run with no final answer. The setting that promises better
+quality would deterministically produce none.
+
+The residual risk is named rather than silenced: `deepseek-chat` can land on DeepInfra at
+**`fp4`**, the most aggressive level here, on an endpoint sitting at 81% uptime. Routing does
+not hide it — `finish_reason` now degrades a truncated run and `generation_id` resolves
+`provider_name` after the fact. Pin a provider only if it actually bites.
+
+Run it yourself: `probe.yml` with `endpoints_only`, which costs nothing — it reads the
+catalogue and makes no completion call.
 
 ## License
 

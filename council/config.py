@@ -23,6 +23,34 @@ PROVIDER_ROUTING: Final[dict[str, object]] = {
     "allow_fallbacks": False,
 }
 
+# `provider.quantizations` is DELIBERATELY ABSENT, and this is the measurement that
+# settled it rather than caution.
+#
+# The temptation is real: a low-precision endpoint is the documented cause of degraded
+# output ("Quantized models may exhibit degraded performance for certain prompts"), and
+# on 2026-08-14 a voter produced a mangled token mid-sentence. `quantizations` looks
+# like the fix.
+#
+# It is not, and the endpoint catalogue says why. `GET /models/{author}/{slug}/endpoints`
+# exposes `quantization` per endpoint (measured 2026-08-14):
+#
+#   openai/gpt-4.1-mini (chairman)  OpenAI unknown · Azure unknown · Azure unknown
+#   deepseek/deepseek-chat          StreamLake unknown · DeepInfra fp4 · Novita fp8
+#   llama-3.3-70b                   13 endpoints: fp8, bf16, fp16 and 5× unknown
+#   mistral-small-3.2-24b           DeepInfra fp8 · Parasail bf16 · Venice fp8
+#
+# The field is an ALLOWLIST ("serve only these"), and EVERY endpoint of the chairman
+# declares `unknown`. Any allowlist therefore leaves the chair with zero compliant
+# endpoints — and with `allow_fallbacks: False` that is not a downgrade, it is a run
+# with no final answer. The setting that promises better quality would deterministically
+# produce none.
+#
+# What is left is a real, named risk: `deepseek-chat` can be served by DeepInfra at
+# **fp4**, the most aggressive quantization on this list (and that endpoint sits at 81%
+# uptime with a degraded status). It is not silenced by routing — it is made VISIBLE
+# instead: `finish_reason` now degrades a truncated run, and `generation_id` resolves
+# `provider_name` after the fact. Watch, and pin a provider only if it actually bites.
+
 # Voters: 3 (odd, for majority voting) from 3 distinct model houses.
 # Divergence comes from the WEIGHTS, not from the datacentre: a model trained by
 # Alibaba and served from Vertex is still an Alibaba voice. Houses are what must
