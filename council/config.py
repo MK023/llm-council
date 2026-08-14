@@ -134,8 +134,27 @@ MAX_RESPONSE_BYTES: Final[int] = 256 * 1024  # 256 KB
 # Defense against runaway loops burning the OpenRouter spend cap
 MAX_TOTAL_TOKENS_PER_RUN: Final[int] = 50_000
 
-# HTTP status codes that warrant retry (rate-limit + server-side transient)
-RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
+# HTTP status codes that warrant retry, taken from the codes OpenRouter actually
+# documents on `POST /chat/completions` (openapi.json, read 2026-08-14) rather than
+# from habit. The set used to be {429, 500, 502, 503, 504}, which retried a code
+# OpenRouter never emits and ignored the two it emits precisely when a provider is
+# under stress:
+#
+#   408 RequestTimeout        the operation exceeded its time limit — transient
+#   429 TooManyRequests       rate limit; the wall that keeps some models out
+#   500 InternalServer        unexpected server error
+#   502 BadGateway            provider/upstream failure
+#   503 ServiceUnavailable    temporarily unavailable
+#   524 EdgeNetworkTimeout    provider timed out AT THE EDGE — was NOT retried
+#   529 ProviderOverloaded    provider temporarily overloaded — was NOT retried
+#
+# 504 is kept although OpenRouter does not document it: their edge timeout is 524, but
+# a proxy or CDN between here and there can still emit a plain gateway timeout, and
+# retrying one costs a backoff.
+#
+# Everything else documented — 400, 401, 402, 403, 404, 413, 422 — is a verdict about
+# the request, not a hiccup: retrying wastes quota and hides the bug.
+RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset({408, 429, 500, 502, 503, 504, 524, 529})
 
 # Stage 2 expects "RANK: X,Y,Z" followed optionally by "REASON: ...".
 # REASON is optional in the regex because some models (Gemini observed 2026-05-15)

@@ -184,3 +184,58 @@ def stage3_synthesis(
     messages = [{"role": "user", "content": prompt}]
     metadata = _build_metadata(session_id, stage="stage_3_chairman")
     return client.call(CHAIRMAN_MODEL, messages, MAX_TOKENS_STAGE_3, metadata=metadata)
+
+
+# ---------------------------------------------------------------------------
+# Verdetti sulla run.
+#
+# Vivevano in `__main__.py` fino al 2026-08-14. Sono stati spostati qui perche'
+# `__main__.py` e' escluso dal gate di mutation — esclusione motivata finche' quel
+# file era SOLO presentazione (mutmut riscrive ogni stringa in tre modi e i messaggi
+# di report seppellivano il segnale del protocollo). Ma queste due funzioni non
+# stampano: decidono l'exit code, cioe' il contratto che la run schedulata legge.
+# Logica di decisione dentro un file non mutato e' esattamente il buco che il gate
+# esiste per chiudere, quindi si sposta il codice invece di negoziare la soglia.
+# ---------------------------------------------------------------------------
+
+
+def _is_truncated(result: CallResult) -> bool:
+    """`length` = the provider stopped at the ceiling, not at the end of the thought.
+
+    OpenRouter documents this on every completion and the council used to throw it away.
+    On 2026-08-14 all three voters came back `length` and two of them were reported [OK]:
+    stage 2 ranked half-answers and the chairman synthesised them. Nothing was red.
+    """
+    return result.finish_reason == "length"
+
+
+def _collect_failures(
+    s1: list[StageResult], s2: list[RankingResult]
+) -> tuple[
+    list[tuple[str, str, str]],
+    list[tuple[str, str, str]],
+    list[tuple[str, str]],
+    list[tuple[str, str]],
+]:
+    """Splits the run's problems into the four kinds that mean different things.
+
+    FAILED means the call did not produce an answer; MALFORMED means it answered but
+    the ranking could not be parsed; TRUNCATED means it answered and the answer stops
+    mid-thought. Conflating them hides which one to act on — and truncation is the one
+    that looks like success, so it is the one that needs its own name most.
+    """
+    stage1_failed = [(chr(65 + i), s.model, s.error or "") for i, s in enumerate(s1) if s.error]
+    stage1_truncated = [
+        (chr(65 + i), s.model) for i, s in enumerate(s1) if not s.error and _is_truncated(s.result)
+    ]
+    stage2_failed = [
+        (chr(65 + i), r.voter, r.error or "")
+        for i, r in enumerate(s2)
+        if r.error and "regex_no_match" not in r.error
+    ]
+    stage2_malformed = [
+        (chr(65 + i), r.voter)
+        for i, r in enumerate(s2)
+        if not r.is_valid and (r.error and "regex_no_match" in r.error)
+    ]
+    return stage1_failed, stage2_failed, stage2_malformed, stage1_truncated

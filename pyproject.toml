@@ -35,6 +35,13 @@ source_paths = ["council/"]
 # mutation gate. `observability.py` stays IN: its output is the telemetry-privacy
 # claim ("never the question or the answers"), which is worth mutating.
 #
+# The exclusion is only defensible while that file is ONLY presentation, and on
+# 2026-08-14 it stopped being so: `_is_truncated` and `_collect_failures` decide the
+# exit code, which is the contract the scheduled run reads. Decision logic inside an
+# unmutated file is exactly the hole this gate exists to close, so the two functions
+# MOVED to `council/stages.py` rather than the threshold being renegotiated. If it
+# happens again, move the code — do not widen the exclusion.
+#
 # Narrowing `source_paths` to single files instead would break the run — mutmut
 # copies only what it walks, so `council/__main__.py` would vanish from the tree
 # and every test importing it would fail to collect. `do_not_mutate` copies.
