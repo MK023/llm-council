@@ -39,17 +39,26 @@ source_paths = ["council/"]
 # copies only what it walks, so `council/__main__.py` would vanish from the tree
 # and every test importing it would fail to collect. `do_not_mutate` copies.
 do_not_mutate = ["council/__main__.py"]
-# The whole suite MINUS the four files that never import `council`: they cannot
-# kill one of its mutants, so including them only adds runtime and drags their
-# filesystem assumptions into the tree mutmut copies. Ignoring by name rather than
-# listing what to run means a new test file joins the mutation run automatically —
-# a list of includes would silently leave it out.
+# The whole suite MINUS the files that cannot kill a `council/` mutant: they only add
+# runtime and drag their filesystem assumptions into the tree mutmut copies. Ignoring by
+# name rather than listing what to run means a new test file joins the mutation run
+# automatically — a list of includes would silently leave it out.
+#
+# The criterion used to be written as "files that never import `council`", which was a
+# proxy and stopped being true on 2026-08-14: `test_probe_models.py` imports `CallResult`
+# to build a fixture while testing `scripts/probe_models.py`. It still cannot kill a
+# `council/` mutant — and worse, it BROKE THE WHOLE GATE: mutmut copies `council/` and
+# the tests into `mutants/`, not `scripts/`, so collection died on
+# `ModuleNotFoundError: No module named 'scripts'` and no mutant was ever tried. A gate
+# that fails to collect reports nothing while looking busy, which is why
+# `scripts/mutation_gate.py` also fails on a run that tried zero mutants.
 pytest_add_cli_args_test_selection = [
     "tests/",
     "--ignore=tests/test_packaging.py",
     "--ignore=tests/test_security_doc.py",
     "--ignore=tests/test_mutation_gate.py",
     "--ignore=tests/test_pin_dev_deps.py",
+    "--ignore=tests/test_probe_models.py",
 ]
 
 [tool.ruff]
