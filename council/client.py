@@ -155,9 +155,17 @@ class OpenRouterClient:
                 backoff = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
                 time.sleep(backoff)
 
+        # The type name alone does not say WHY. On 2026-08-14 a voter died here with
+        # "HTTPError" and nothing else: 429 (the rate limit that kept Mistral out of
+        # the council in July) and 503 (a provider outage) are the same word, and they
+        # call for opposite decisions — change seat, or wait. The status code is the
+        # whole diagnosis and it was already in hand.
+        cause = type(last_error).__name__ if last_error else "unknown"
+        status = getattr(last_error, "code", None)
         raise OpenRouterError(
             f"All {MAX_RETRIES} attempts failed for model='{model}': "
-            f"{type(last_error).__name__ if last_error else 'unknown'}"
+            f"{cause}{f' HTTP {status}' if status else ''}",
+            status_code=status,
         )
 
     def _request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]:

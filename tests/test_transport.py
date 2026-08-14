@@ -302,6 +302,30 @@ class TestRetryArithmetic(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, MAX_RETRIES)
         self.assertIn("HTTPError", str(ctx.exception))
 
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_the_exhaustion_error_names_the_status_code(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """429 and 503 are the same word and opposite decisions: change seat, or wait."""
+        mock_urlopen.side_effect = _http_error(429)
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertIn("HTTP 429", str(ctx.exception))
+        self.assertEqual(ctx.exception.status_code, 429)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_transport_failure_has_no_status_to_report(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A URLError carries no code, and inventing one would be worse than none."""
+        mock_urlopen.side_effect = urllib.error.URLError("down")
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertNotIn("HTTP", str(ctx.exception))
+        self.assertIsNone(ctx.exception.status_code)
+
 
 class TestResultMapping(unittest.TestCase):
     """What the API said, translated into the CallResult the protocol reads."""
