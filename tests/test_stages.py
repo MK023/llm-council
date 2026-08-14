@@ -27,6 +27,7 @@ from council.stages import (
     RankingResult,
     StageResult,
     _build_metadata,
+    _collect_failures,
     stage1_responses,
     stage2_rankings,
     stage3_synthesis,
@@ -428,3 +429,84 @@ class TestWhatEachStageActuallyAsks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheLabelBlamesTheRightVoter(unittest.TestCase):
+    """`_collect_failures` decides WHO gets named in the ERROR SUMMARY.
+
+    The labels are positional — `chr(65 + i)` — and until 2026-08-14 nothing asserted
+    it: mutating the arithmetic to `chr(65 - i)` or `chr(66 + i)` left the suite green.
+    A summary that blames the wrong voter is worse than no summary, because it sends
+    the next person to re-measure a model that was working. Same family as the voter
+    attribution already pinned above, one layer up.
+
+    These moved here from `__main__.py`, which is outside the mutation gate. They are
+    decisions, not printing, so they belong where mutants are tried.
+    """
+
+    def _stage1(self, *errors: str | None) -> list[StageResult]:
+        errors = errors or (None,) * len(VOTER_MODELS)
+        return [
+            StageResult(model=m, result=_result("x"), error=e)
+            for m, e in zip(VOTER_MODELS, errors, strict=True)
+        ]
+
+    def _rankings(self, *errors: str | None) -> list[RankingResult]:
+        errors = errors or (None,) * len(VOTER_MODELS)
+        return [
+            RankingResult(
+                voter=m,
+                result=_result("x"),
+                rank=None if e else ("A", "B", "C"),
+                reason="",
+                is_valid=not e,
+                error=e,
+            )
+            for m, e in zip(VOTER_MODELS, errors, strict=True)
+        ]
+
+    def test_the_second_voter_is_labelled_B(self) -> None:
+        failed, _, _, _ = _collect_failures(self._stage1(None, "caduto", None), self._rankings())
+        self.assertEqual([label for label, _, _ in failed], ["B"])
+
+    def test_the_third_voter_is_labelled_C(self) -> None:
+        failed, _, _, _ = _collect_failures(self._stage1(None, None, "caduto"), self._rankings())
+        self.assertEqual([label for label, _, _ in failed], ["C"])
+
+    def test_the_labels_run_A_B_C_in_order(self) -> None:
+        failed, _, _, _ = _collect_failures(self._stage1("g", "g", "g"), self._rankings())
+        self.assertEqual([label for label, _, _ in failed], ["A", "B", "C"])
+        self.assertEqual([model for _, model, _ in failed], list(VOTER_MODELS))
+
+    def test_a_stage2_failure_keeps_its_position_and_its_message(self) -> None:
+        _, s2_failed, _, _ = _collect_failures(
+            self._stage1(None, None, None), self._rankings(None, "429 exhausted", None)
+        )
+        self.assertEqual([(label, err) for label, _, err in s2_failed], [("B", "429 exhausted")])
+
+    def test_a_truncated_voter_keeps_its_position(self) -> None:
+        s1 = [
+            StageResult(
+                model=m,
+                result=CallResult(
+                    content="tagliata",
+                    cost=0.0,
+                    tokens=1,
+                    latency_s=0.0,
+                    attempts=1,
+                    finish_reason="length" if i == 2 else "stop",
+                ),
+            )
+            for i, m in enumerate(VOTER_MODELS)
+        ]
+        _, _, _, truncated = _collect_failures(s1, self._rankings())
+        self.assertEqual(truncated, [("C", VOTER_MODELS[2])])
+
+    def test_malformed_and_failed_are_split_on_the_regex_marker(self) -> None:
+        """The discriminator is the literal `regex_no_match`: it decides which list."""
+        _, s2_failed, s2_malformed, _ = _collect_failures(
+            self._stage1(None, None, None),
+            self._rankings("regex_no_match (Stage 2 output did not match RANK regex)", "500", None),
+        )
+        self.assertEqual([label for label, _ in s2_malformed], ["A"])
+        self.assertEqual([label for label, _, _ in s2_failed], ["B"])
