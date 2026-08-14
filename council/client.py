@@ -55,6 +55,13 @@ class CallResult:
     # `openrouter-request-id`, so that field was null on 7 records out of 7. The
     # unit tests never caught it because they mock headers the real API does not send.
     generation_id: str | None = None
+    # Why a SUCCESSFUL call carries a reason for stopping: `length` means the provider
+    # cut the answer at the token ceiling. The content is present, valid and incomplete
+    # — it passes every check here, because every check here is about shape. Discarding
+    # this field is how three voters shipped truncated answers marked [OK] for months.
+    # The API says "I cut this one"; refusing to read it is a choice, and it was the
+    # wrong one.
+    finish_reason: str | None = None
 
 
 # The three trace fields OpenRouter Broadcast reads. An allowlist, not a merge:
@@ -135,6 +142,7 @@ class OpenRouterClient:
                     attempts=attempt,
                     request_id=request_id,
                     generation_id=data.get("id"),
+                    finish_reason=data["choices"][0].get("finish_reason"),
                 )
             except urllib.error.HTTPError as exc:
                 # Retry only on rate-limit + server-side transient; fail fast on 4xx auth/bad-request

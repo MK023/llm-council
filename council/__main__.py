@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final
 
 from council import __version__
-from council.client import OpenRouterClient, OpenRouterError
+from council.client import CallResult, OpenRouterClient, OpenRouterError
 from council.config import MAX_QUESTION_LENGTH, MAX_TOTAL_TOKENS_PER_RUN
 from council.observability import TraceContext, emit, hash_question
 from council.stages import (
@@ -145,9 +145,12 @@ def _report_stage1(s1: list[StageResult], trace: TraceContext) -> int:
             attempts=s.result.attempts,
             request_id=s.result.request_id,
             generation_id=s.result.generation_id,
+            finish_reason=s.result.finish_reason,
             error=s.error,
         )
-        status = "FAILED" if s.error else "OK"
+        # TRUNCATED is not a cosmetic label: a cut answer reads as a complete one, and
+        # the whole point of naming it is that nobody has to notice the missing ending.
+        status = "FAILED" if s.error else ("TRUNCATED" if _is_truncated(s.result) else "OK")
         print(f"\n--- Response {chr(65 + i)} [{status}] ({s.model}) ---")
         print(f"ERROR: {s.error}" if s.error else s.result.content)
         # `gen=` is on the SUCCESS line on purpose: a degraded answer — a mangled token,
@@ -161,6 +164,16 @@ def _report_stage1(s1: list[StageResult], trace: TraceContext) -> int:
             f"{f' req={s.result.request_id}' if s.result.request_id else ''}]"
         )
     return consumed
+
+
+def _is_truncated(result: CallResult) -> bool:
+    """`length` = the provider stopped at the ceiling, not at the end of the thought.
+
+    OpenRouter documents this on every completion and the council used to throw it away.
+    On 2026-08-14 all three voters came back `length` and two of them were reported [OK]:
+    stage 2 ranked half-answers and the chairman synthesised them. Nothing was red.
+    """
+    return result.finish_reason == "length"
 
 
 def _rank_status(r: RankingResult) -> str:
@@ -188,6 +201,7 @@ def _report_stage2(s2: list[RankingResult], trace: TraceContext) -> int:
             latency_s=r.result.latency_s,
             request_id=r.result.request_id,
             generation_id=r.result.generation_id,
+            finish_reason=r.result.finish_reason,
             error=r.error,
         )
         print(f"\n--- Voter {i + 1} [{status}] ({r.voter}) ---")
@@ -204,13 +218,23 @@ def _report_stage2(s2: list[RankingResult], trace: TraceContext) -> int:
 
 def _collect_failures(
     s1: list[StageResult], s2: list[RankingResult]
-) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]], list[tuple[str, str]]]:
-    """Splits the run's problems into the three kinds that mean different things.
+) -> tuple[
+    list[tuple[str, str, str]],
+    list[tuple[str, str, str]],
+    list[tuple[str, str]],
+    list[tuple[str, str]],
+]:
+    """Splits the run's problems into the four kinds that mean different things.
 
     FAILED means the call did not produce an answer; MALFORMED means it answered but
-    the ranking could not be parsed. Conflating them hides which one to act on.
+    the ranking could not be parsed; TRUNCATED means it answered and the answer stops
+    mid-thought. Conflating them hides which one to act on — and truncation is the one
+    that looks like success, so it is the one that needs its own name most.
     """
     stage1_failed = [(chr(65 + i), s.model, s.error or "") for i, s in enumerate(s1) if s.error]
+    stage1_truncated = [
+        (chr(65 + i), s.model) for i, s in enumerate(s1) if not s.error and _is_truncated(s.result)
+    ]
     stage2_failed = [
         (chr(65 + i), r.voter, r.error or "")
         for i, r in enumerate(s2)
@@ -221,18 +245,32 @@ def _collect_failures(
         for i, r in enumerate(s2)
         if not r.is_valid and (r.error and "regex_no_match" in r.error)
     ]
-    return stage1_failed, stage2_failed, stage2_malformed
+    return stage1_failed, stage2_failed, stage2_malformed, stage1_truncated
 
 
 def _print_error_summary(
     stage1_failed: list[tuple[str, str, str]],
     stage2_failed: list[tuple[str, str, str]],
     stage2_malformed: list[tuple[str, str]],
+    stage1_truncated: list[tuple[str, str]] | None = None,
+    chairman_truncated: bool = False,
 ) -> None:
     """Calibration hints: what to change before spending on another run."""
     print("\n" + "=" * 72)
     print("ERROR SUMMARY — calibration hints for future runs")
     print("=" * 72)
+    if stage1_truncated:
+        print(f"\nStage 1 truncated ({len(stage1_truncated)}):")
+        for label, model in stage1_truncated:
+            print(f"  Voter {label} | {model}")
+        print("    -> finish_reason='length': the answer stops at the ceiling, not at its end.")
+        print("       Raise MAX_TOKENS_STAGE_1, or measure the seat again with")
+        print("       `scripts/probe_models.py`. The `gen=` id above resolves the provider via")
+        print("       GET /api/v1/generation — a model can be cut by WHO serves it, not by what")
+        print("       it is (Novita did exactly that to kimi-k2-0905 on 2026-08-14).")
+    if chairman_truncated:
+        print("\nChairman truncated:")
+        print("    -> the FINAL answer stops mid-thought. Raise MAX_TOKENS_STAGE_3.")
     if stage1_failed:
         print(f"\nStage 1 failures ({len(stage1_failed)}):")
         for label, model, err in stage1_failed:
@@ -342,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         attempts=s3.attempts,
         request_id=s3.request_id,
         generation_id=s3.generation_id,
+        finish_reason=s3.finish_reason,
     )
     print(f"\n{s3.content}")
     print(f"\n[tok={s3.tokens} cost=${s3.cost:.6f} lat={s3.latency_s}s]")
@@ -350,7 +389,10 @@ def main(argv: list[str] | None = None) -> int:
     total_latency = (
         sum(s.result.latency_s for s in s1) + sum(r.result.latency_s for r in s2) + s3.latency_s
     )
-    stage1_failed, stage2_failed, stage2_malformed = _collect_failures(s1, s2)
+    stage1_failed, stage2_failed, stage2_malformed, stage1_truncated = _collect_failures(s1, s2)
+    # Il chairman troncato e' una risposta finale che si interrompe: peggio di un voter
+    # tagliato, perche' e' quella che l'utente legge.
+    chairman_truncated = _is_truncated(s3)
 
     emit(
         "query_complete",
@@ -361,11 +403,16 @@ def main(argv: list[str] | None = None) -> int:
         stage1_failed_count=len(stage1_failed),
         stage2_failed_count=len(stage2_failed),
         stage2_malformed_count=len(stage2_malformed),
+        stage1_truncated_count=len(stage1_truncated),
+        chairman_truncated=chairman_truncated,
     )
 
-    degraded = bool(stage1_failed or stage2_failed or stage2_malformed)
+    degraded = bool(stage1_failed or stage2_failed or stage2_malformed or stage1_truncated)
+    degraded = degraded or chairman_truncated
     if degraded:
-        _print_error_summary(stage1_failed, stage2_failed, stage2_malformed)
+        _print_error_summary(
+            stage1_failed, stage2_failed, stage2_malformed, stage1_truncated, chairman_truncated
+        )
 
     print("\n" + "=" * 72)
     print(
@@ -373,7 +420,9 @@ def main(argv: list[str] | None = None) -> int:
         f"latency={round(total_latency, 2)}s | "
         f"s1_failed={len(stage1_failed)}/{len(s1)} "
         f"s2_failed={len(stage2_failed)}/{len(s2)} "
-        f"s2_malformed={len(stage2_malformed)}/{len(s2)}"
+        f"s2_malformed={len(stage2_malformed)}/{len(s2)} "
+        f"s1_truncated={len(stage1_truncated)}/{len(s1)}"
+        f"{' chairman_truncated' if chairman_truncated else ''}"
     )
     print("=" * 72)
 
