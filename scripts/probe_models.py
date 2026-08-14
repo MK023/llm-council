@@ -15,6 +15,7 @@ and the workstation sits behind a DMZ.
 
     python scripts/probe_models.py                  # the default candidate list
     python scripts/probe_models.py model/a model/b  # explicit candidates
+    python scripts/probe_models.py --endpoints m/a  # who can serve it, at what quantization
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ DEFAULT_CANDIDATES = (
 )
 
 _GENERATION_URL = "https://openrouter.ai/api/v1/generation?id="
+_ENDPOINTS_URL = "https://openrouter.ai/api/v1/models/{model}/endpoints"
 # Il record di generation compare con qualche secondo di ritardo rispetto alla
 # risposta: la prima run in CI e' morta su un 404 che da terminale, minuti dopo,
 # rispondeva. Attese in secondi fra i tentativi.
@@ -93,6 +95,39 @@ def generation_stats(generation_id: str, api_key: str) -> dict[str, object]:
         time.sleep(pausa)
     print(f"  (lookup {generation_id}: ancora 404 dopo i tentativi)", file=sys.stderr)
     return {}
+
+
+def endpoint_report(model: str, api_key: str) -> None:
+    """Which endpoints can serve a model, at what quantization, and how reliably.
+
+    `PublicEndpoint` in the OpenAPI spec carries `quantization`, `uptime_last_30m` and
+    `latency_last_30m` per endpoint. It is the measurement that has to come BEFORE
+    setting `provider.quantizations`: this project routes fail-closed on ZDR
+    (`allow_fallbacks: false`), so every extra constraint shrinks the pool of compliant
+    endpoints and converts a quality risk into an availability risk. Turning a knob
+    because the documentation mentions it is how a routing table becomes cargo cult.
+    """
+    req = urllib.request.Request(
+        _ENDPOINTS_URL.format(model=model), headers={"Authorization": f"Bearer {api_key}"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read()).get("data", {})
+    except urllib.error.HTTPError as exc:
+        print(f"{model}: endpoints non leggibili (HTTP {exc.code})")
+        return
+    endpoints = data.get("endpoints") or []
+    print(f"\n{model}  ({len(endpoints)} endpoint)")
+    for e in endpoints:
+        print(
+            "  {:16s} quant={:10s} status={:6s} uptime30m={:>6s} ctx={:>8s}".format(
+                str(e.get("provider_name"))[:16],
+                str(e.get("quantization")),
+                str(e.get("status")),
+                str(e.get("uptime_last_30m")),
+                str(e.get("context_length")),
+            )
+        )
 
 
 def probe(models: tuple[str, ...], api_key: str, max_tokens: int = MAX_TOKENS_STAGE_1) -> int:
@@ -137,8 +172,14 @@ def main(argv: list[str]) -> int:
         return 2
     # Il budget si prova PRIMA di adottarlo: misurare a 800 dice chi tronca oggi,
     # misurare al budget nuovo dice se il budget nuovo basta. Serve il secondo.
+    modelli = tuple(a for a in argv if a != "--endpoints") or DEFAULT_CANDIDATES
+    if "--endpoints" in argv:
+        # Nessuna chiamata di completion: legge solo il catalogo degli endpoint.
+        for m in modelli:
+            endpoint_report(m, api_key)
+        return 0
     budget = int(os.environ.get("PROBE_MAX_TOKENS") or MAX_TOKENS_STAGE_1)
-    return probe(tuple(argv) or DEFAULT_CANDIDATES, api_key, budget)
+    return probe(modelli, api_key, budget)
 
 
 if __name__ == "__main__":
