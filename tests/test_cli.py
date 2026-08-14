@@ -220,6 +220,85 @@ class TestTheReportCarriesTheLookupKey(unittest.TestCase):
         self.assertNotIn("gen=", out)
 
 
+class TestTruncationIsNotSuccess(unittest.TestCase):
+    """`finish_reason='length'` must be visible AND must colour the exit code.
+
+    A cut answer is present, valid and incomplete: it passes every shape check, and on
+    2026-08-14 two voters shipped one while the run reported [OK] and exited 0. Stage 2
+    ranked half-answers, the chairman synthesised them, and nothing went red for months.
+
+    The exit code is the contract the weekly E2E reads, so truncation belongs in it —
+    otherwise a model that quietly gets more verbose degrades the council in silence.
+    """
+
+    def setUp(self) -> None:
+        self.env = patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def _cut(self, content: str = "una risposta tagliata a", **kwargs: object) -> CallResult:
+        return CallResult(
+            content=content,
+            cost=0.001,
+            tokens=100,
+            latency_s=1.0,
+            attempts=1,
+            finish_reason="length",
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+    def _stage1_with_one_cut(self) -> list[StageResult]:
+        return [
+            StageResult(model=m, result=self._cut() if i == 0 else _ok())
+            for i, m in enumerate(VOTER_MODELS)
+        ]
+
+    def test_a_truncated_voter_degrades_the_run_to_exit_3(self) -> None:
+        code, _, _ = _run(["domanda"], stage1_responses=self._stage1_with_one_cut())
+        self.assertEqual(code, 3)
+
+    def test_the_truncated_voter_is_labelled_not_ok(self) -> None:
+        _, out, _ = _run(["domanda"], stage1_responses=self._stage1_with_one_cut())
+        self.assertIn("[TRUNCATED]", out)
+
+    def test_the_summary_says_what_to_change(self) -> None:
+        """A red run with no next step costs a week, because that is the cadence."""
+        _, out, _ = _run(["domanda"], stage1_responses=self._stage1_with_one_cut())
+        self.assertIn("Stage 1 truncated (1)", out)
+        self.assertIn("MAX_TOKENS_STAGE_1", out)
+
+    def test_the_counter_appears_in_the_total_line(self) -> None:
+        _, out, _ = _run(["domanda"], stage1_responses=self._stage1_with_one_cut())
+        self.assertIn("s1_truncated=1/3", out)
+
+    def test_a_truncated_chairman_also_degrades_the_run(self) -> None:
+        """The final answer stopping mid-thought is the worst version of this."""
+        code, out, _ = _run(["domanda"], stage3_synthesis=self._cut("sintesi tagliata a"))
+        self.assertEqual(code, 3)
+        self.assertIn("Chairman truncated", out)
+
+    def test_a_run_that_stops_on_its_own_is_still_a_clean_zero(self) -> None:
+        """`stop` is the normal case and must stay silent, or the label means nothing."""
+        finished = [
+            StageResult(
+                model=m,
+                result=CallResult(
+                    content="risposta",
+                    cost=0.001,
+                    tokens=100,
+                    latency_s=1.0,
+                    attempts=1,
+                    finish_reason="stop",
+                ),
+            )
+            for m in VOTER_MODELS
+        ]
+        code, out, _ = _run(["domanda"], stage1_responses=finished)
+        self.assertEqual(code, 0)
+        self.assertNotIn("[TRUNCATED]", out)
+        self.assertIn("s1_truncated=0/3", out)
+
+
 class TestArgParsing(unittest.TestCase):
     def test_question_is_positional(self) -> None:
         self.assertEqual(parse_args(["la mia domanda"]).question, "la mia domanda")

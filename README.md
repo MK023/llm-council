@@ -260,6 +260,26 @@ vary the same wrong dimension look like thorough investigation and are not.
   fields carry identifiers, costs and timings — never the question or the answers.
   That is a deliberate limit, enforced by `tests/test_stages.py::TestTelemetryPrivacy`.
 
+### Truncation is not success — added 2026-08-14
+
+`finish_reason` is now read on **every** successful call and carried out on `CallResult`.
+A voter whose answer was cut at the ceiling is labelled `[TRUNCATED]` instead of `[OK]`,
+counted in the TOTAL line as `s1_truncated=n/3`, listed in the ERROR SUMMARY with what to
+change, and — the part that matters — it **degrades the run to exit 3**, so the weekly E2E
+goes red.
+
+That last point is the whole design. A cut answer is present, valid and incomplete: it
+passes every check here, because every check here is about shape. On 2026-08-14 all three
+voters came back `length`, two of them were reported `[OK]`, stage 2 ranked half-answers
+and the chairman synthesised them. Nothing was red, and nothing had been red for months.
+
+Models drift — they get more verbose, a provider changes how it serves them, a prompt gets
+longer. The exit code is the contract the scheduled run reads, so the drift has to reach it.
+A truncated **chairman** degrades the run too: that one is the final answer stopping
+mid-sentence.
+
+`stop` stays silent. A label that appears on every run is a label nobody reads.
+
 ### A voter answered, and the answer is degraded
 
 The failure this protocol handles well is the **empty** one — see the reasoning-model

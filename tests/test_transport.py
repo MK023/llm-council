@@ -220,6 +220,46 @@ class TestGenerationId(unittest.TestCase):
         self.assertIn("generation_id='gen-vuoto'", str(ctx.exception))
 
 
+class TestFinishReasonReachesTheCaller(unittest.TestCase):
+    """The field that says the answer was CUT, on a call that otherwise looks perfect.
+
+    `length` means the provider stopped at the token ceiling. The content is present and
+    valid, so nothing else in this client will ever object — which is why the value has
+    to travel out of here intact. It was being discarded, and three voters shipped
+    truncated answers marked [OK] for months.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_cut_answer_reports_length(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"choices": [{"message": {"content": "tagliata a"}, "finish_reason": "length"}]}
+        )
+        result = self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(result.finish_reason, "length")
+        self.assertEqual(result.content, "tagliata a")
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_complete_answer_reports_stop(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"choices": [{"message": {"content": "completa"}, "finish_reason": "stop"}]}
+        )
+        self.assertEqual(
+            self.client.call("test/model", self.messages, max_tokens=10).finish_reason, "stop"
+        )
+
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_provider_that_omits_it_leaves_none(self, mock_urlopen: MagicMock) -> None:
+        """Absent is not `stop`: pretending it finished would be inventing the evidence."""
+        mock_urlopen.return_value = _mock_response(_OK_BODY)
+        self.assertIsNone(
+            self.client.call("test/model", self.messages, max_tokens=10).finish_reason
+        )
+
+
 class TestRetryArithmetic(unittest.TestCase):
     """How many times, how long between, and what the counters end up saying."""
 
