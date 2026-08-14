@@ -27,6 +27,7 @@ from council.config import (
     OPENROUTER_URL,
     PROVIDER_ROUTING,
     RETRY_BACKOFF_SECONDS,
+    RETRYABLE_STATUS_CODES,
     TEMPERATURE,
     TIMEOUT_SECONDS,
     USER_AGENT,
@@ -365,6 +366,56 @@ class TestRetryArithmetic(unittest.TestCase):
             self.client.call("test/model", self.messages, max_tokens=10)
         self.assertNotIn("HTTP", str(ctx.exception))
         self.assertIsNone(ctx.exception.status_code)
+
+
+class TestRetryableCodesMatchTheDocumentedOnes(unittest.TestCase):
+    """The retry set is a claim about OpenRouter's API, so it is checked against it.
+
+    Read from `openapi.json` on 2026-08-14: the documented responses of
+    `POST /chat/completions` include `524 EdgeNetworkTimeout` and `529 ProviderOverloaded`
+    — the two that appear exactly when a provider is under stress — and neither was
+    retried. The old set also retried `504`, which OpenRouter does not document at all.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    def test_the_documented_transient_codes_are_all_retryable(self) -> None:
+        for code in (408, 429, 500, 502, 503, 524, 529):
+            self.assertIn(code, RETRYABLE_STATUS_CODES, f"HTTP {code} è transitorio per la doc")
+
+    def test_the_documented_verdicts_are_not_retryable(self) -> None:
+        """400/401/402/403/404/413/422 say something about the request, not the moment."""
+        for code in (400, 401, 402, 403, 404, 413, 422):
+            self.assertNotIn(code, RETRYABLE_STATUS_CODES, f"HTTP {code} non va ritentato")
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_provider_overload_is_retried_then_succeeds(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """529 is the one that says 'come back in a moment', and it used to fail fast."""
+        mock_urlopen.side_effect = [_http_error(529), _mock_response(_OK_BODY)]
+        self.assertEqual(self.client.call("m", self.messages, max_tokens=10).attempts, 2)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_an_edge_timeout_is_retried_then_succeeds(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        mock_urlopen.side_effect = [_http_error(524), _mock_response(_OK_BODY)]
+        self.assertEqual(self.client.call("m", self.messages, max_tokens=10).attempts, 2)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_an_unprocessable_request_still_fails_fast(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        mock_urlopen.side_effect = _http_error(422, b'{"error":"bad schema"}')
+        with self.assertRaises(OpenRouterError):
+            self.client.call("m", self.messages, max_tokens=10)
+        mock_sleep.assert_not_called()
 
 
 class TestResultMapping(unittest.TestCase):

@@ -10,12 +10,14 @@ from pathlib import Path
 from typing import Final
 
 from council import __version__
-from council.client import CallResult, OpenRouterClient, OpenRouterError
+from council.client import OpenRouterClient, OpenRouterError
 from council.config import MAX_QUESTION_LENGTH, MAX_TOTAL_TOKENS_PER_RUN
 from council.observability import TraceContext, emit, hash_question
 from council.stages import (
     RankingResult,
     StageResult,
+    _collect_failures,
+    _is_truncated,
     stage1_responses,
     stage2_rankings,
     stage3_synthesis,
@@ -166,16 +168,6 @@ def _report_stage1(s1: list[StageResult], trace: TraceContext) -> int:
     return consumed
 
 
-def _is_truncated(result: CallResult) -> bool:
-    """`length` = the provider stopped at the ceiling, not at the end of the thought.
-
-    OpenRouter documents this on every completion and the council used to throw it away.
-    On 2026-08-14 all three voters came back `length` and two of them were reported [OK]:
-    stage 2 ranked half-answers and the chairman synthesised them. Nothing was red.
-    """
-    return result.finish_reason == "length"
-
-
 def _rank_status(r: RankingResult) -> str:
     """FAILED = the API call failed; MALFORMED = it answered but the rank did not parse."""
     if r.error and "regex_no_match" not in r.error:
@@ -214,38 +206,6 @@ def _report_stage2(s2: list[RankingResult], trace: TraceContext) -> int:
                 print(f"PARSED RANK: {' > '.join(r.rank)}  |  REASON: {reason}")
         print(f"[tok={r.result.tokens} cost=${r.result.cost:.6f} lat={r.result.latency_s}s]")
     return consumed
-
-
-def _collect_failures(
-    s1: list[StageResult], s2: list[RankingResult]
-) -> tuple[
-    list[tuple[str, str, str]],
-    list[tuple[str, str, str]],
-    list[tuple[str, str]],
-    list[tuple[str, str]],
-]:
-    """Splits the run's problems into the four kinds that mean different things.
-
-    FAILED means the call did not produce an answer; MALFORMED means it answered but
-    the ranking could not be parsed; TRUNCATED means it answered and the answer stops
-    mid-thought. Conflating them hides which one to act on — and truncation is the one
-    that looks like success, so it is the one that needs its own name most.
-    """
-    stage1_failed = [(chr(65 + i), s.model, s.error or "") for i, s in enumerate(s1) if s.error]
-    stage1_truncated = [
-        (chr(65 + i), s.model) for i, s in enumerate(s1) if not s.error and _is_truncated(s.result)
-    ]
-    stage2_failed = [
-        (chr(65 + i), r.voter, r.error or "")
-        for i, r in enumerate(s2)
-        if r.error and "regex_no_match" not in r.error
-    ]
-    stage2_malformed = [
-        (chr(65 + i), r.voter)
-        for i, r in enumerate(s2)
-        if not r.is_valid and (r.error and "regex_no_match" in r.error)
-    ]
-    return stage1_failed, stage2_failed, stage2_malformed, stage1_truncated
 
 
 def _print_error_summary(

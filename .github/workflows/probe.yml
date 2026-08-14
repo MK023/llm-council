@@ -25,6 +25,11 @@ on:
         description: "Budget da provare (vuoto = MAX_TOKENS_STAGE_1)"
         required: false
         type: string
+      endpoints_only:
+        description: "Solo catalogo endpoint (provider, quantizzazione, uptime): nessuna chiamata a pagamento"
+        required: false
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -69,7 +74,12 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           MODELS: ${{ inputs.models }}
           PROBE_MAX_TOKENS: ${{ inputs.max_tokens }}
+          ENDPOINTS_ONLY: ${{ inputs.endpoints_only }}
         run: |
           read -r -a candidati <<< "$MODELS"
-          python scripts/probe_models.py "${candidati[@]}"
+          if [ "$ENDPOINTS_ONLY" = "true" ]; then
+            python scripts/probe_models.py --endpoints "${candidati[@]}"
+          else
+            python scripts/probe_models.py "${candidati[@]}"
+          fi
         shell: bash
