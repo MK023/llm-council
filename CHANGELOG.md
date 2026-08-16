@@ -95,9 +95,14 @@ running something and reading the answer, and none of it out of re-reading a doc
 
 ### Note on releases
 
-The published tags stop at **v0.2.0**. `0.3.0` and this entry describe the state of the
-code, not a GitHub release — worth saying plainly, since a changelog heading reads like a
-release and this one is not.
+Tagged on 2026-08-16, which is later than both entries describe.
+
+`v0.4.0` points at the current `main`. `v0.3.0` was applied retroactively to `58d9275`,
+the commit that carried the version bump; that commit is dated 2026-07-26 and matches the
+heading above, so the code the tag points at is the right code. The tag object itself was
+created in August, and `git tag -l --format='%(creatordate)'` will say so. Before this,
+the published tags stopped at `v0.2.0` while the code said `0.3.0`: a changelog heading
+reads like a release, and for three weeks two of them were not.
 
 ## [0.3.0] — 2026-07-26
 
