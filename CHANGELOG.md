@@ -5,6 +5,100 @@ All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-14
+
+Two nights, eighteen PRs (#13–#30). Same shape as 0.3.0: defences that existed on paper
+and not in the code. What is new is where they were found. Every item below came out of
+running something and reading the answer, and none of it out of re-reading a document.
+
+### Fixed — the council was quietly shipping cut answers
+
+- **Truncation was reported as success.** An E2E run came back with all three voters at
+  `finish_reason='length'`; two of them delivered a half-answer labelled `[OK]`, Stage 2
+  ranked those halves and the chairman synthesised them. Nothing went red, and nothing
+  had for months: the API returns `finish_reason` on every call and the client threw it
+  away. It is now carried on `CallResult`, printed as `[TRUNCATED]`, counted in the TOTAL
+  line, explained in the ERROR SUMMARY, and it **degrades the run to exit 3** — because
+  the exit code is what the scheduled run reads, and models get more verbose over time.
+- **Three of the four seats were reasoning models**, including the chairman, which this
+  project's own config forbids in capital letters. The catalogue said so all along:
+  `GET /api/v1/models` carries a `reasoning` object, *"omitted for non-reasoning models"*,
+  and `gemini-3.5-flash-lite` had it `mandatory: true`. The deny-list in the tests covered
+  **only the chairman** while all three voters had drifted onto reasoning models, one of
+  them with reasoning that cannot be switched off.
+- **A model property and a provider behaviour are different things.** `kimi-k2-0905` is
+  *not* a reasoning model, and still burned 800 tokens producing nothing: Novita served it
+  that way. The response body carried no `message.reasoning`, so the error said
+  `reasoning=absent` and pointed away from the cause. Only `native_tokens_reasoning` on
+  `GET /api/v1/generation` told the truth.
+- **The Stage 2 prompt showed a format the parser rejects.** It read
+  `RANK: <best>,<middle>,<worst>`, and a voter answered `RANK: <A,B,C>` — it copied the
+  angle brackets, which is a fair reading. The prompt and `RANK_REGEX` are one contract in
+  two places; the test asserted the two halves separately and so pinned the mismatch
+  instead of catching it. The example is now extracted *from the prompt* and fed to the
+  parser, and it is `B,C,A` rather than `A,B,C`: an example anchors, and a voter that
+  merely echoes it must stay visible.
+- **The exhaustion error said only `HTTPError`.** `429` (rate limit) and `503` (provider
+  outage) are the same word and call for opposite decisions — change the seat, or wait.
+- **The retry set did not match the documented codes.** It retried `504`, which OpenRouter
+  does not document, and ignored `524 EdgeNetworkTimeout` and `529 ProviderOverloaded`,
+  which it emits precisely when a provider is under stress. Read from `openapi.json` and
+  realigned, with `408` added.
+
+### Changed — the seats, rebuilt on a measurement
+
+| seat | model | measured |
+|---|---|---|
+| Voter EU | `mistralai/mistral-small-3.2-24b-instruct` | `stop`, 809 tok, 0 reasoning |
+| Voter US | `meta-llama/llama-3.3-70b-instruct` | `stop`, 850 tok, 0 reasoning |
+| Voter CN | `deepseek/deepseek-chat` | `stop`, 1059 tok, 0 reasoning |
+| Chairman | `openai/gpt-4.1-mini` | `stop`, 823 tok, 0 reasoning |
+
+- **Europe is back, and not through the BYOK key everyone assumed was the only route.**
+  The July note had Mistral out on rate limits; a *smaller* Mistral answers, complies with
+  ZDR, and is the cheapest of the three. Three weeks of assumption ended in four minutes
+  of measurement.
+- Cost per run **~$0.013 → ~$0.005**, with longer answers.
+- `MAX_TOKENS_STAGE_1` **800 → 1400**. The longest answer that finished on its own is 1059
+  tokens, so the ceiling now sits a third above it. The old 800 had been set *at* the day's
+  measurement rather than above it.
+- `provider.quantizations` **measured and deliberately not set**: the field is an allowlist
+  and every endpoint of the chairman declares `unknown`, so any allowlist leaves the chair
+  with zero compliant endpoints. Under `allow_fallbacks: false` that is not a downgrade,
+  it is a run with no final answer.
+
+### Added
+
+- `scripts/probe_models.py` + `probe.yml` — measures a candidate on the **real** Stage 1
+  prompt, at the real budget, with the real routing, then resolves who served it. The seat
+  rule existed as a comment in `config.py` and was relearned the hard way twice; it is a
+  command now.
+- `CallResult.generation_id`, the documented key for `GET /api/v1/generation` — printed
+  next to answers that look **fine**, because a degraded answer never reaches an error
+  message. `request_id` stays but is null in practice: OpenRouter sends neither header.
+
+### Testing & CI
+
+- Mutation score **55.5% → 86.7%**, floor raised 55 → 80 → 85, always *after* the
+  measurement. `stages.py` went from 25 survivors to 1.
+- The mutation workflow now prints the **diff** of each survivor, not just its name —
+  mutmut cannot run on this workstation, so a name alone left only guessing.
+- Decision logic (`_is_truncated`, `_collect_failures`) **moved out of `__main__.py`**,
+  which is excluded from mutation. The exclusion was honest while that file was only
+  presentation; the code moved rather than the threshold.
+- Required checks **8 → 10**: `gitleaks` and `dependency-review` ran on every PR without
+  blocking anything, because they were added to the CI in August and never to a ruleset
+  last edited in July. Adding a job and making it required are two different places.
+- Supply chain: dev dependencies pinned **by hash**, gitleaks and dependency-review as
+  gates, `permissions: {}` per workflow. Dependabot deliberately watches the Actions only,
+  with the cost of that choice written down.
+
+### Note on releases
+
+The published tags stop at **v0.2.0**. `0.3.0` and this entry describe the state of the
+code, not a GitHub release — worth saying plainly, since a changelog heading reads like a
+release and this one is not.
+
 ## [0.3.0] — 2026-07-26
 
 Nine PRs in one session (#3–#11). The theme: three defences the project *declared*
@@ -46,8 +140,12 @@ but never *enforced*, found by running it instead of reading it.
 ### Testing & CI
 - Coverage **50% → 100%** (lines and branches), measured for the first time. Among the
   uncovered lines was `_label_responses`, the LLM01 defence the docs claim by name.
-- **33 → 122 tests**, each new behaviour verified by mutation: break the code, watch the
-  test go red.
+- Every new behaviour verified by mutation: break the code, watch the test go red.
+  *(This entry originally read "33 → 122 tests". The number was wrong when it was
+  written — the suite was at 151 — and it is the reason this project stopped writing
+  test counts down: the same figure lived in four disconnected places with four
+  different values. A count is a fact with a shelf life; the gate that enforces it
+  is not.)*
 - Branch protection with **8 required checks**; actions pinned to SHA with zizmor
   guarding the pinning; SonarCloud analysis from CI with the same coverage as the local
   gates; **weekly live E2E** that fails on exit 3 — the degraded run that a human spots
