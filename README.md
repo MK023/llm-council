@@ -5,6 +5,9 @@
 Multi-model anti-sycophancy verification council using OpenRouter as gateway.  
 3 independent voters → blind peer ranking → external chairman synthesis.
 
+What changed and why is in [CHANGELOG.md](CHANGELOG.md); the entries carry the reasoning,
+not just the diff.
+
 ## Why this exists
 
 Single-model LLM responses suffer from **sycophancy bias** (RLHF tends to optimize for agreement, not truth). Asking the same question to N different models from different providers, then having them anonymously rank each other and a fourth model synthesize, mitigates the bias — divergences between models surface where a single model would have rubber-stamped your assumption.
