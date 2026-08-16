@@ -190,3 +190,10 @@ Anthropic models are intentionally excluded from both voter and chairman roles (
   Authoritative correlation for grouping the 7 calls of a single council run is the
   client-side `trace_id` emitted on stderr by `council/observability.py`.
   See README for details and future direction.
+
+<!-- Le intestazioni usano la convenzione Keep a Changelog `## [x.y.z]`, che senza queste
+     definizioni e' solo grafica: parentesi quadre che sembrano link e non lo sono. Sono
+     state aggiunte il 2026-08-16, quando i tag hanno reso possibile il confronto vero. -->
+[0.4.0]: https://github.com/MK023/llm-council/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/MK023/llm-council/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/MK023/llm-council/releases/tag/v0.2.0
