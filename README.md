@@ -70,7 +70,7 @@ before (~$0.0014 against ~$0.004) while producing longer answers.
 python -m council "Should I accept the offer from Company X?"
 ```
 
-The full council flow runs (~60s end-to-end, ~$0.013 cost). Output goes to stdout, structured JSON observability logs go to stderr.
+The full council flow runs (~90s end to end, ~$0.005). Output goes to stdout, structured JSON observability logs go to stderr.
 
 ## Optional: Langfuse observability
 
@@ -110,7 +110,7 @@ Declared before the thresholds, so they can be defended rather than lowered.
 **Live E2E, weekly.** `.github/workflows/e2e.yml` runs one real council on a schedule and
 fails if the exit code is not 0 — including **3**, the degraded run. That is the whole point:
 a voter that starts refusing produces a usable answer and a quiet 3, which is how a broken
-voter stayed hidden for two months. Costs ~$0.013 per run. Never triggered by `pull_request`:
+voter stayed hidden for two months. Costs ~$0.005 per run. Never triggered by `pull_request`:
 the repo is public and secrets must not reach a fork's workflow.
 
 The unit suite still never touches the network — this is the one exception, and it lives on
@@ -207,20 +207,27 @@ with no federation available.
 
 ## Cost reference
 
-Measured on a real run, 2026-07-26 (not estimated):
+Measured on a real run, 2026-08-14 (not estimated) — the per-stage figures come from the
+telemetry of that run, not from a price list:
 
 | Component | Cost per query |
 |---|---|
-| Stage 1 (3 voters) | ~$0.004 |
-| Stage 2 (3 blind rankings) | ~$0.004 |
-| Stage 3 (chairman, GPT-5.6 Luna) | ~$0.005 |
-| **Total per query** | **~$0.013** |
+| Stage 1 (3 voters) | ~$0.0016 |
+| Stage 2 (3 blind rankings) | ~$0.0017 |
+| Stage 3 (chairman, GPT-4.1 mini) | ~$0.0019 |
+| **Total per query** | **~$0.0052** |
 
-With a $5 OpenRouter budget that is **~380 queries**. Latency ~56s end to end.
+14.5k tokens, ~86s end to end. With a $5 OpenRouter budget that is **~960 queries**.
 
-Cheaper than the May configuration (~$0.027) despite newer models: the frontier tier
-buys convergence, and a council that converges is an expensive echo. Voters are chosen
-to disagree and to *answer* — see the measurements in `config.py`.
+Down from ~$0.013 in July and ~$0.027 in May, while the answers got *longer*. Nothing was
+optimised for price: the seats were rebuilt to exclude reasoning models, and the models
+that answer without burning their budget on internal thought happen to be the cheap ones.
+The frontier tier buys convergence, and a council that converges is an expensive echo —
+voters are chosen to disagree and to *answer*. The measurements are in `config.py`.
+
+Latency is the one number that got worse. A single run has been observed at 320s with a slow
+provider, against the usual 86 to 95. The 90s per-call timeout and the retry budget are what
+bound the worst case; there is no other limit on it.
 
 ## When to use the council vs Claude alone
 

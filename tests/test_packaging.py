@@ -16,6 +16,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import council
+
 if sys.version_info >= (3, 11):
     import tomllib
 
@@ -68,3 +70,31 @@ class TestNoRuntimeDependencies(unittest.TestCase):
             "requirements.txt exists — runtime dependencies belong in pyproject, "
             "and this project has none. Name tooling files requirements-<what>.txt.",
         )
+
+
+class TestTheVersionIsWrittenOnce(unittest.TestCase):
+    """Three files carry the version, and nothing checked that they agree.
+
+    It is the same shape as the test count that was written in four places with four
+    different numbers: a fact repeated by hand drifts, and the drift is silent because
+    each copy looks right on its own. `pyproject.toml` is the manifest and therefore
+    the source; `__init__.py` feeds the User-Agent that OpenRouter sees, and
+    `sonar-project.properties` labels the analysis. A run reporting a version the
+    package does not have is a run nobody can correlate.
+    """
+
+    def _manifest_version(self) -> str:
+        with open(REPO_ROOT / "pyproject.toml", "rb") as fh:
+            return tomllib.load(fh)["project"]["version"]
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "tomllib landed in 3.11")
+    def test_the_package_reports_the_manifest_version(self) -> None:
+        self.assertEqual(council.__version__, self._manifest_version())
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "tomllib landed in 3.11")
+    def test_sonar_analyses_the_manifest_version(self) -> None:
+        righe = (REPO_ROOT / "sonar-project.properties").read_text().splitlines()
+        dichiarata = next(
+            r.split("=", 1)[1].strip() for r in righe if r.startswith("sonar.projectVersion")
+        )
+        self.assertEqual(dichiarata, self._manifest_version())

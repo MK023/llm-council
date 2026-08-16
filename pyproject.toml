@@ -1,6 +1,6 @@
 [project]
 name = "llm-council"
-version = "0.3.0"
+version = "0.4.0"
 description = "Multi-model anti-sycophancy verification council via OpenRouter (stdlib-only)"
 readme = "README.md"
 license = { file = "LICENSE" }
