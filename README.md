@@ -137,7 +137,11 @@ no monitor at all.
 
 **Level 1 → 3 (partial).** Actions pinned to SHA, `permissions: {}` at workflow level with
 each grant written per job, `persist-credentials: false`, and a ruleset on `main` that forbids
-direct push, force-push and deletion.
+direct push, force-push and deletion, requires linear history, and accepts **squash only** as a
+merge method — the history is squashed in practice, so any other method was a door nobody used
+and everybody trusted. Required checks are **strict**: a branch behind `main` cannot merge until
+it is updated, because a green run against a stale base says nothing about the merge result.
+No bypass actors, admins included.
 
 Ten checks are **required** by that ruleset, which is the difference between a gate that runs
 and a gate that blocks:
@@ -154,6 +158,13 @@ claimed they blocked the merge while they only ran: they arrived with the supply
 not block is a check whose red is a matter of opinion. Found by reading the ruleset through the
 API instead of trusting this paragraph — which is the only way that class of drift ever surfaces.
 
+The same reading on **2026-08-19** produced the rest of what is described above: linear history,
+squash-only merges, strict checks and the CodeQL alert threshold were absent, and `main` was the
+least constrained branch across every repository that shares this pipeline. The required check
+named `CodeQL` only ever asserted that the job finished — the `code_scanning` rule is what makes
+its findings block. Twenty branches already merged were still on the remote, and
+`delete_branch_on_merge` was off, which is why they accumulated.
+
 What each gate blocks on, because a gate without a written policy is a future
 `continue-on-error`:
 
@@ -166,6 +177,7 @@ What each gate blocks on, because a gate without a written policy is a future
 | **Dependency review** | a vulnerable dependency entering the diff | nothing to review today, which is the point |
 | **SonarQube Cloud** | quality gate red | zero suppressed rules |
 | **Workflow lint** (zizmor) | any finding | it is what keeps the SHA pins pinned |
+| **Code scanning** (CodeQL) | any error-level alert, or a security alert rated high or above | a ruleset rule, not just a required check: it reads the alerts, not the job's exit code |
 
 ### The supply chain that actually exists
 
