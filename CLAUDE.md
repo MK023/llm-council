@@ -22,6 +22,21 @@ cio' che leggere il codice NON insegna, e che si e' pagato per scoprire.
 
 Questi commenti sono gratis: rimossi prima dell'iniezione in contesto. La garanzia vale
 SOLO per i file CLAUDE.md, non per rules/ o SKILL.md.
+
+LA LEZIONE DELLA PRIMA STESURA, che vale per ogni repo su cui si ripete questo lavoro.
+La prima versione e' stata scritta dalla pagina Atlas del progetto invece che dal codice,
+e una revisione avversaria ha trovato QUATTRO affermazioni false su 39 verificate. Tutte
+e quattro venivano dalla stessa cosa: la pagina era aggiornata al 14/08 ma la sezione
+copiata era ferma alla mattina del 13/08, e il copia si e' fermato una sezione troppo
+presto. La piu' cara diceva che `finish_reason` non era esposto e che il difetto era
+"ancora aperto, ed e' la radice" — chiuso da undici giorni, con il codice a due righe di
+distanza.
+
+Regola che ne esce: una knowledge base invecchia, il codice no. Dove divergono ha ragione
+il repo, e ogni affermazione su un controllo si verifica ESEGUENDO prima di scriverla —
+`python3 -c "from council.config import ..."` costa due secondi. Un CLAUDE.md e' caricato
+a ogni turno: una riga falsa li' dentro non e' un refuso, e' un'istruzione sbagliata data
+a ogni sessione futura.
 -->
 
 ## What this is
@@ -38,7 +53,7 @@ is an expensive echo**. Voters are meant to dissent; only the chairman has to be
 
 | seat | model | why |
 |---|---|---|
-| Voter EU | `mistralai/mistral-small-3.2-24b` | cheapest of the three |
+| Voter EU | `mistralai/mistral-small-3.2-24b-instruct` | cheapest of the three |
 | Voter US | `meta-llama/llama-3.3-70b-instruct` | |
 | Voter CN | `deepseek/deepseek-chat` | |
 | Chairman | `openai/gpt-4.1-mini` | **outside** the voter pool |
@@ -47,15 +62,18 @@ is an expensive echo**. Voters are meant to dissent; only the chairman has to be
   vote. Marco has a BYOK key and deliberately does not use it here.
 - **Never seat a reasoning model**, chairman least of all: it spends `max_tokens` thinking and
   then writes nothing. A truncated voter leaves a 2/3 council; a truncated chairman loses the
-  whole run. `config.py` forbids it in capitals — and on 2026-08-14 **three of four seats were
-  reasoning models anyway**, because the deny-list in the tests only covered the chairman. A
-  rule applied to one seat out of four is applied nowhere.
+  whole run. `config.py` says so in capitals for the chair, and `tests/test_routing.py`
+  (`KNOWN_BUDGET_BURNERS`) is what actually checks all four seats — on 2026-08-14 **three of
+  four were reasoning models anyway**, because the deny-list only covered the chairman. A rule
+  applied to one seat out of four is applied nowhere.
 - **A model's catalogue entry is not the provider's behaviour**: `kimi-k2-0905` has `reasoning`
   omitted in `GET /api/v1/models` and still burned 715-800 tokens producing nothing, because
   *Novita* serves it that way. Only `native_tokens_reasoning` on `GET /api/v1/generation` told
   the truth.
 - Changing a seat means running `scripts/probe_models.py` first — real Italian prompt, full ZDR
-  routing, 1200 tokens. `HTTP 404 "No endpoints found"` is **not** a bug: it is
+  routing, and the budget stage 1 actually ships (`MAX_TOKENS_STAGE_1`, 1400 today;
+  `PROBE_MAX_TOKENS` overrides it). **Measure at the budget you will ship, never below it.**
+  `HTTP 404 "No endpoints found"` is **not** a bug: it is
   `allow_fallbacks: false` refusing a non-compliant endpoint. The privacy posture costs
   candidates, and that is the trade.
 
@@ -67,7 +85,7 @@ python -m coverage run -m unittest discover tests/ && python -m coverage report
 python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 ruff check council/ tests/ scripts/ && ruff format --check council/ tests/ scripts/
 zizmor .github/workflows/
-mutmut run && mutmut export-cicd-stats                     # then: scripts/mutation_gate.py
+mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # CI ONLY: libcst ships no wheel for Apple x86_64, mutmut does not run on this workstation
 python scripts/pin_dev_deps.py                             # never hand-edit the -dev/-mutation lockfiles
 ```
 
@@ -88,27 +106,33 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   ruff, coverage, zizmor or mutmut waits for a human. Valid only while the repo publishes
   nothing and has no runtime deps — **the condition is in the file so the day it falls is
   visible**.
-- **Never write the test count anywhere.** It once lived in four disconnected places (site 33,
-  README 122, Atlas 126, reality 151). Declare the property a gate defends, not a number with
-  an expiry date.
+- **Never write the test count anywhere.** It once lived in four disconnected places, each
+  stale by a different amount. Declare the property a gate defends, not a number with an
+  expiry date.
 - **The mutation floor moves only after a measurement**, and stays *below* the current score: a
   floor equal to the score turns the next unlucky mutant into a red build. It opened at 55 on
-  2026-08-13 and is now 80.
+  2026-08-13 and is now **85** — `MUTATION_FLOOR` in `mutation.yml`, declared in one place.
 
 ## Gotchas paid for
 
-- **`finish_reason` is not exposed on successful responses — a truncation is invisible.** This
-  is still open, and it is the root. On 2026-08-14 all three voters came back truncated, two of
-  them marked `[OK]`; stage 2 ranked them and the chairman synthesised them. It had looked
-  healthy for months.
-- **Coverage 100% is not evidence.** First mutation run: 47.5% with the lines fully covered.
-  Then 81.5% — **without changing a line of `council/`**: 148 mutants died to new assertions,
-  which is the proof the gate was needed. The assertions checked that a line *ran*, not what it
-  *produced*.
+- **A truncation reads exactly like success, and did for months.** On 2026-08-14 all three
+  voters came back at `finish_reason='length'`, two of them marked `[OK]`; stage 2 ranked half
+  answers and the chairman synthesised them. **Closed the same day**: `finish_reason` is now
+  carried on `CallResult` for every successful call (`client.py`), `_is_truncated` labels it
+  `[TRUNCATED]` (`stages.py`), and a truncated run degrades to `exit 3` — the code `e2e.yml`
+  fails on. Do not reopen it as a gap: read `council/client.py` before believing any document
+  that says otherwise, this one included.
+- **Coverage 100% is not evidence.** The gate's first run scored **55.5% with every line
+  covered** — 253 survivors. It is **85.9% now** (488/568, measured 2026-08-13) **without a
+  line of `council/` changing**: every mutant since died to a new assertion, which is the proof
+  the gate was needed. The assertions checked that a line *ran*, not what it *produced*.
+  (Over *all* of `council/` the same day it was 47.5%, ~70% of those survivors being string
+  rewrites in the printing layer — which is why `__main__.py` is excluded from mutation.)
 - **Aggregating a tool's output by symbolic name: check the groups sum to the total.** mutmut
   names class-method mutants with a different separator (`council.client.xǁOpenRouterClientǁcall`),
   so aggregating on the free-function pattern reported `client.py` as the most solid module when
-  it was the least covered — 116 survivors, not 6. 143 against 253 was there to see.
+  it was the least covered. The check that would have caught it costs nothing: **the per-module
+  survivor counts must add up to the run total.**
 - **The prompt showed a shape the parser rejects** (`RANK: <best>,<middle>,<worst>` → a voter
   copied the angle brackets), and the test asserted the two halves separately, freezing the
   mismatch instead of catching it. The example is now extracted **from** the prompt and fed to
@@ -116,7 +140,7 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   visible instead of blending into a real consensus.
 - **A recorded limit without a measurement expires in silence.** "Europe is out on rate limits,
   we need a BYOK key" stood for three weeks and was false: a *smaller* Mistral answered fine.
-  Four minutes of measuring closed it.
+  One measurement closed it.
 
 ## Security
 
