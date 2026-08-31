@@ -62,8 +62,13 @@ jobs:
             prematura, e concludi con una raccomandazione pratica.
         run: |
           set +e
-          python -m council "$QUESTION"
+          # stderr su file E a video: lo step dopo ne ha bisogno per sapere quale sessione
+          # cercare su Langfuse e quante chiamate sono davvero partite. Redirezione semplice
+          # e `cat` dopo, non `tee` in process substitution: quella lascia un sottoprocesso
+          # che puo' non aver ancora scaricato il buffer quando lo step successivo legge.
+          python -m council "$QUESTION" 2>council.stderr
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          cat council.stderr >&2
 
       # Il contratto d'uscita è il test. 3 = degradato: la risposta esiste ma un
       # votante è caduto, ed è ESATTAMENTE il caso che questo job deve scoprire.
@@ -80,6 +85,25 @@ jobs:
             4) echo "::error::Tetto token superato." ; exit 1 ;;
             *) echo "::error::Uno stadio è fallito del tutto (exit $CODE)." ; exit 1 ;;
           esac
+
+      # L'ingestione verso Langfuse NON parte da questo codice: passa da OpenRouter
+      # Broadcast, una spunta nell'account. Nessun test puo' raggiungere una casella nel
+      # cruscotto di qualcun altro, quindi fino al 2026-08-31 quel pezzo non era misurato da
+      # niente — funzionava, ma per fortuna e non per prova.
+      #
+      # `if: always()` perche' vale anche su una run degradata: e' proprio quando qualcosa
+      # e' andato storto che serve sapere se la traccia e' arrivata. Lo script esce SEMPRE 0
+      # e non puo' cambiare il verdetto dello step sopra.
+      - name: Le tracce sono arrivate a Langfuse?
+        if: always()
+        # Tetto proprio, oltre a quello del job: questo step dorme aspettando l'ingestione
+        # e pagina. Se restasse appeso, il rosso finirebbe sul council invece che qui.
+        timeout-minutes: 5
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
+        run: python scripts/langfuse_check.py council.stderr
 
       # Check-in del cron monitor Sentry (slug: llm-council-e2e).
       #

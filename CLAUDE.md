@@ -161,21 +161,22 @@ Check `python -V` before believing the wheel story:
   like they did — plus a `langfuse_opt_in` field that went true when they existed — were
   removed on 2026-08-31: a lamp wired to nothing reads as proof, and made an unverified
   fact look checked.
+- **`scripts/langfuse_check.py`** (from `e2e.yml`) is the only thing measuring that half:
+  warning-only, always exit 0, alarms on *"no complete run in 8 days"* — never on the run it
+  just watched, since ingestion may lag 15 minutes.
 - **Group by `sessionId`, never `traceId`.** Measured 2026-08-31: when a stage fails,
-  OpenRouter gives the failed call its **own** trace id, so one run lands as two traces.
-  `sessionId` was identical across both. A check written from the docs would count 6 of 7
-  and cry data loss.
-- **A failed attempt still produces a generation in Langfuse**, while the council's own
-  telemetry records no `generation_id` for it. Compare with `>=`, never `==`.
+  OpenRouter gives that call its **own** trace id, so one run lands as two traces with one
+  shared `sessionId`. Filtering by trace counts 6 of 7 and cries data loss. And a failed
+  attempt still produces a generation there while the telemetry records no `generation_id`
+  for it — so compare with `>=`, never `==`.
 - **Costs are there; unit prices are not.** `totalCost` is populated (OpenRouter sends the
-  real figure); `totalPrice` is null because Langfuse has no price sheet for these models.
-  Reading the wrong one says "Langfuse does not track cost", which is false.
-- **The Sentry cron monitor `llm-council-e2e` is `disabled` and has never checked in.**
-  Free plan, one active monitor per account, and the seat is held by `supabase-keepalive`.
-  So the long comment in `e2e.yml` describes a guard that is **not running**: nothing
-  notices if the weekly E2E fails to start. Deliberate as of 2026-08-31 — a replacement is
-  under evaluation. Until then this is the known blind spot, and it is why the E2E was red
-  for a week without anyone seeing it.
+  real figure); `totalPrice` is null — no Langfuse price sheet for these models. Reading the
+  wrong one says "Langfuse does not track cost", which is false.
+- **The Sentry cron monitor `llm-council-e2e` is `disabled` and has never checked in.** Free
+  plan, one active monitor per account, seat held by `supabase-keepalive`. The long comment
+  in `e2e.yml` therefore describes a guard that is **not running**: nothing notices if the
+  weekly E2E never starts. Known blind spot as of 2026-08-31, replacement under evaluation —
+  and the reason the E2E sat red for a week unseen.
 - Secrets: **Doppler** (`llm-council`, config `prd`) and GitHub Actions. `doppler run --`, never a printed value.
 
 ## Security

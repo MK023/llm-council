@@ -66,6 +66,12 @@ pytest_add_cli_args_test_selection = [
     "--ignore=tests/test_mutation_gate.py",
     "--ignore=tests/test_pin_dev_deps.py",
     "--ignore=tests/test_probe_models.py",
+    # Stessa trappola del 2026-08-14, ripetuta il 2026-08-31 da `test_langfuse_check.py`:
+    # importa `scripts.langfuse_check` a livello di modulo, mutmut non copia `scripts/`,
+    # la raccolta muore e il gate riporta zero mutanti provati sembrando occupato.
+    # Il commento sopra la descriveva gia' per esteso e non e' bastato: il gate ha bisogno
+    # di una riga qui ogni volta che un test nuovo importa da `scripts/`.
+    "--ignore=tests/test_langfuse_check.py",
 ]
 
 [tool.ruff]

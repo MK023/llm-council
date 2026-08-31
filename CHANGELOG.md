@@ -7,6 +7,58 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — the monitor's own failure modes, found by reviewing it
+
+- **"Always exit 0" was written as a list of exception types, which is not a promise.**
+  `{"data": null}` and a `totalCost` arriving as a string — and Langfuse's own doc sample
+  shows price fields as strings — both escaped as `TypeError`, exited non-zero, turned the
+  E2E red and sent `status=error` to Sentry: a false alarm about the council, raised by the
+  thing watching the council. The clause is now `except Exception`, which here is the
+  correct choice rather than the lazy one, and still prints only the exception's *type* —
+  its message could carry the request URL, and the URL is built from a secret.
+- **Pagination had no iteration cap.** An API returning the same cursor looped forever and
+  the job died on `timeout-minutes` — again, red attributed to the council.
+- **`test_langfuse_check.py` would have broken the whole mutation gate.** It imports
+  `scripts.langfuse_check` at module level, mutmut copies `council/` and `tests/` but not
+  `scripts/`, collection dies on `ModuleNotFoundError` and the gate reports zero mutants
+  tried while looking busy. `pyproject.toml` documents this trap verbatim from 2026-08-14
+  and it happened again anyway; the comment now says a new `--ignore` line is needed each
+  time a test imports from `scripts/`.
+- **`"marco-bellingeri"` was a second hand-kept copy.** It is now `USER_ID` in `config.py`,
+  imported by both writer and reader: two copies drifting would not silence this check, they
+  would make it warn every week forever about an ingestion that is working perfectly.
+- **`LANGFUSE_BASE_URL` had no scheme validation** while reaching `urlopen`, which speaks
+  `file://` — reading local disk instead of the network — and `http://`, on which the Basic
+  auth would travel in the clear. It must be `https://`.
+- **The poll budget was 75 seconds and three documents said 90.** It sleeps *between*
+  attempts, not after the last one. It is computed now instead of written by hand.
+
+### Added — the half of the telemetry nothing was measuring
+
+- **`scripts/langfuse_check.py`, run by the weekly E2E.** Ingestion into Langfuse does not
+  start in this code: it goes through OpenRouter Broadcast, a checkbox in an account, and no
+  unit test can reach a checkbox in someone's dashboard. So that half was measured by nothing
+  at all — it worked, but by luck rather than by proof, and nobody had looked until
+  2026-08-31. The script asks Langfuse whether the run that just happened arrived, and prints
+  the 30-day spend beside it.
+- **It warns and never fails**, always `exit 0`, and a missing stderr file or an unreachable
+  API is a warning too. A guard that kills what it guards is worse than no guard: the
+  council's verdict belongs to the step before.
+- **The alarm is not on the run it just watched.** Langfuse documents up to **15 minutes** of
+  ingestion delay for third-party exporters, and Broadcast is one; a 90-second poll shouting
+  "data loss" would be shouting at a documented delay, which is how a monitor teaches everyone
+  to ignore it. The alarm sits where the delay cannot reach: *no complete council run in the
+  last **8** days*. Eight and not seven because GitHub's scheduler slipped nearly seven hours
+  on 2026-08-31 — a window equal to the schedule fires on the wrong system.
+- **Three details that came from measuring the live API, not from reading its docs.** Filter
+  by `sessionId`, never `traceId`: when a stage fails OpenRouter mints its own trace id for
+  that call, so one run lands as two traces sharing one session — filtering by trace counts
+  6 of 7 and reports a loss that never happened. Compare `arrived >= sent`, never `==`: a
+  failed attempt still produces a generation there while the telemetry records no
+  `generation_id` for it. And `LANGFUSE_BASE_URL` has **no default**, because Langfuse Cloud
+  has separate EU and US regions and the wrong one does not fail — it answers `200` with zero
+  results, the most convincing false alarm available.
+
 ### Fixed — a rate limit is not a hiccup
 
 - **The same seat fell the same way twice, and the retry loop waited three seconds.** On

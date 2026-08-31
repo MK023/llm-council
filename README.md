@@ -97,11 +97,21 @@ Two corrections to what this section used to say, both wrong for months:
 - It described the destination as "self-hosted via `langfuse-devops-lab`". That project
   uses **Langfuse Cloud, EU region**. Nothing here is self-hosted.
 
-The cost of routing ingestion through an account setting is that **the repo cannot prove
-it works** — no test can reach a checkbox in someone's dashboard. It was verified by hand
-for the first time on 2026-08-31, and it does work: runs going back weeks, grouped by
-session, with per-call cost. That it took until then to look is the point. No number here,
-deliberately — a count in a README is a fact with a shelf life and no gate behind it.
+The cost of routing ingestion through an account setting is that **no unit test can prove
+it works** — none of them can reach a checkbox in someone's dashboard. It was verified by
+hand for the first time on 2026-08-31, and it does work. That it took until then to look is
+the point, so it is no longer done by hand: the weekly E2E now runs
+`scripts/langfuse_check.py`, which asks Langfuse whether the run that just happened actually
+arrived, and prints the spend of the last 30 days beside it.
+
+**It warns and never fails.** A guard that kills what it guards is worse than no guard, so
+the council's own verdict always belongs to the step before. And it does not alarm on the
+run it just watched — Langfuse documents up to fifteen minutes of ingestion delay for
+third-party exporters, and OpenRouter Broadcast is one, so shouting "data loss" a minute
+later would be shouting at a documented delay. The alarm sits on a question the
+delay cannot touch: **has a single complete council run reached Langfuse in the last eight
+days?** Eight, not seven, because GitHub's scheduler slipped by nearly seven hours on
+2026-08-31 and a window equal to the schedule would fire on the wrong system.
 
 ## Run tests
 
