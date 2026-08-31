@@ -156,6 +156,35 @@ MAX_RETRIES: Final[int] = 3
 RETRY_BACKOFF_SECONDS: Final[tuple[int, ...]] = (1, 2, 4)
 MAX_QUESTION_LENGTH: Final[int] = 4000
 
+# A rate limit is not a hiccup, and the backoff above was calibrated for hiccups.
+#
+# On 2026-08-24 and again on 2026-08-31 the weekly E2E lost the same seat the same way:
+# `mistralai/mistral-small-3.2-24b-instruct` answered Stage 1 and then took HTTP 429 on
+# all three Stage 2 attempts. Those three attempts span THREE seconds — the loop sleeps
+# only between attempts, so with MAX_RETRIES=3 it uses 1s and 2s and never reaches the 4.
+# A rate-limit window does not reopen in three seconds.
+#
+# OpenRouter documents the answer and we were throwing it away: *"Request- or token-level
+# rate limit hit. Respect the `Retry-After` header before retrying"*, and the header is
+# present *"when every attempted provider returned a retry hint"*. The client read the
+# error body and never the headers.
+#
+# The cap exists because Retry-After is a number chosen by someone else: an hour-long hint
+# would park a council run for an hour. Above the cap we stop waiting and report, which is
+# a decision we can defend, rather than delegating our own runtime to a provider.
+#
+# The fallback is an ESTIMATE and is written as one. When no hint arrives we do not know
+# the window; 20s is longer than the old 1-2s and short enough that two of them keep a run
+# inside four minutes. If the seat keeps failing with a hint we never see, the answer is
+# a different seat, not a bigger guess here.
+#
+# OpenRouter's own remedy — *"add fallback models or relax provider routing preferences"* —
+# is closed to this project by design: `allow_fallbacks: false` is what buys the zero-
+# retention guarantee. The privacy posture was already documented as costing candidates.
+# It costs reliability too, and this constant is where that bill is paid.
+RETRY_AFTER_CAP_SECONDS: Final[int] = 30
+RATE_LIMIT_FALLBACK_SECONDS: Final[int] = 20
+
 # Defense against compromised/runaway endpoint streaming gigabytes
 MAX_RESPONSE_BYTES: Final[int] = 256 * 1024  # 256 KB
 

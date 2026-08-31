@@ -16,6 +16,8 @@ from council.config import (
     MAX_RETRIES,
     OPENROUTER_URL,
     PROVIDER_ROUTING,
+    RATE_LIMIT_FALLBACK_SECONDS,
+    RETRY_AFTER_CAP_SECONDS,
     RETRY_BACKOFF_SECONDS,
     RETRYABLE_STATUS_CODES,
     TEMPERATURE,
@@ -91,6 +93,35 @@ def _build_payload(
     return payload
 
 
+_RATE_LIMITED: Final[int] = 429
+# "On 429 Too Many Requests and 503 Service Unavailable responses, OpenRouter may include a
+# standard HTTP `Retry-After` response header" — openrouter.ai/docs/api-reference/errors,
+# read 2026-08-31. The first draft of this said 429 was the only one and froze that claim in
+# a test docstring; the review checked the page instead of the comment.
+_RETRY_AFTER_CODES: Final[frozenset[int]] = frozenset({429, 503})
+
+
+def _retry_after_hint(exc: urllib.error.HTTPError) -> int | None:
+    """The provider's explicit wait, capped — or None when it did not give a usable one.
+
+    `Retry-After` crosses a trust boundary and reaches `time.sleep`: it also has an HTTP-date
+    form this does not parse, and a hostile endpoint can send anything at all. Anything that
+    is not a plain non-negative integer is treated as absent, and a usable hint is still
+    capped. **The number belongs to the provider; the ceiling belongs to us.**
+
+    A negative hint must return None rather than pass through: `time.sleep(-1)` raises, and
+    that exception escapes the retry loop and kills the whole run.
+    """
+    hint = exc.headers.get("Retry-After")
+    try:
+        seconds = int(hint)
+    except (TypeError, ValueError):  # absent (None), an HTTP-date, or anything hostile
+        return None
+    if seconds < 0:
+        return None
+    return min(seconds, RETRY_AFTER_CAP_SECONDS)
+
+
 class OpenRouterClient:
     """Stdlib-only OpenRouter chat completions client with retry and schema validation."""
 
@@ -131,6 +162,7 @@ class OpenRouterClient:
         last_error: Exception | None = None
 
         for attempt in range(1, MAX_RETRIES + 1):
+            wait_override: int | None = None
             try:
                 data, request_id = self._request(payload)
                 self._validate_response(data, request_id)
@@ -153,6 +185,15 @@ class OpenRouterClient:
                         status_code=exc.code,
                     ) from exc
                 last_error = exc
+                # Two different things, and conflating them is how the first draft got it
+                # wrong. An explicit hint is an instruction and is obeyed wherever OpenRouter
+                # documents sending one. The long FALLBACK is a guess about an unstated
+                # window, and a window is what a rate limit has — so it stays 429-only, and
+                # a 503 with no hint keeps waiting an instant.
+                if exc.code in _RETRY_AFTER_CODES:
+                    wait_override = _retry_after_hint(exc)
+                if wait_override is None and exc.code == _RATE_LIMITED:
+                    wait_override = RATE_LIMIT_FALLBACK_SECONDS
             except (urllib.error.URLError, json.JSONDecodeError) as exc:
                 # Transport-layer transient errors: retry
                 last_error = exc
@@ -166,9 +207,21 @@ class OpenRouterClient:
                 if exc.status_code not in RETRYABLE_STATUS_CODES:
                     raise
                 last_error = exc
+                # A rate limit is a rate limit whichever channel carried it. Without this,
+                # a 429 in the body waited 3 seconds while the same 429 in the status line
+                # waited 40 — and the body is the channel an attacker would pick. There is
+                # no header to read on this path: a 200 response carries no Retry-After for
+                # an error OpenRouter chose to put in the payload, so the fallback is all
+                # there is.
+                if exc.status_code == _RATE_LIMITED:
+                    wait_override = RATE_LIMIT_FALLBACK_SECONDS
 
             if attempt < MAX_RETRIES:
-                backoff = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+                backoff = (
+                    wait_override
+                    if wait_override is not None
+                    else RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+                )
                 time.sleep(backoff)
 
         # The type name alone does not say WHY. On 2026-08-14 a voter died here with
