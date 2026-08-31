@@ -37,6 +37,9 @@ jobs:
   probe:
     name: Candidati sul prompt vero
     runs-on: ubuntu-latest
+    # Senza, si eredita il default di GitHub: sei ore. Il probe chiama l'API vera su N
+    # candidati e ognuno puo' restare appeso fino al timeout per richiesta.
+    timeout-minutes: 20
     permissions:
       contents: read
     if: github.repository == 'MK023/llm-council'
@@ -76,6 +79,23 @@ jobs:
           PROBE_MAX_TOKENS: ${{ inputs.max_tokens }}
           ENDPOINTS_ONLY: ${{ inputs.endpoints_only }}
         run: |
+          # Stesso recinto della E2E, e per lo stesso motivo: `probe_models.py` stampa a
+          # colonna 0 stringhe che arrivano dal catalogo OpenRouter — `quantization`,
+          # `status`, `finish_reason` — e testo prodotto dai modelli candidati. Nel log di
+          # un repo pubblico una riga che inizia con `::` e' un comando al runner.
+          #
+          # `:?` e non un default: un recinto che si apre senza token fallirebbe in
+          # silenzio su un controllo di sicurezza, che e' il modo in cui una protezione
+          # smette di esistere senza che nulla diventi rosso.
+          STOP_TOKEN="$(openssl rand -hex 16)"
+          : "${STOP_TOKEN:?token del recinto vuoto: openssl non ha prodotto niente}"
+          # Ripristino anche se lo step muore. DUE trap e non uno, misurato: `trap ... EXIT`
+          # da solo NON scatta su SIGTERM, che e' il caso per cui serve. Il secondo
+          # trasforma il segnale in un `exit`, cosi' il primo parte una volta sola su
+          # entrambi i percorsi. Contro SIGKILL non si puo' niente.
+          trap 'echo "::${STOP_TOKEN}::"' EXIT
+          trap 'exit 143' TERM INT
+          echo "::stop-commands::${STOP_TOKEN}"
           read -r -a candidati <<< "$MODELS"
           if [ "$ENDPOINTS_ONLY" = "true" ]; then
             python scripts/probe_models.py --endpoints "${candidati[@]}"

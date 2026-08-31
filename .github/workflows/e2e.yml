@@ -62,6 +62,40 @@ jobs:
             prematura, e concludi con una raccomandazione pratica.
         run: |
           set +e
+          # TUTTO cio' che il council stampa qui e' scritto da un LLM: tre risposte, tre
+          # valutazioni, la sintesi del presidente. Il repo e' pubblico e questo log lo e'
+          # altrettanto, e per GitHub una riga che inizia a colonna 0 con `::` e' un COMANDO
+          # — `::error::`, `::add-mask::`, `::stop-commands::`. Un modello che ne scrive uno,
+          # per malizia o per caso, parlerebbe al runner invece che a noi.
+          #
+          # Le risposte non si possono sanificare: sono il prodotto dello strumento, sono
+          # markdown su piu' righe, e mutilarle significherebbe rompere cio' che il council
+          # esiste per produrre. Quindi non si filtra il testo, si toglie il potere ai
+          # comandi mentre quel testo scorre.
+          #
+          # Token casuale a ogni run come prescrive la doc GitHub — *"Make sure the token
+          # you're using is randomly generated and unique for each run"*: con un token fisso
+          # in un repo pubblico sarebbe il modello a poter riaccendere i comandi.
+          #
+          # `$GITHUB_OUTPUT` non ne risente: e' un file, non un comando di workflow.
+          #
+          # `:?` e non un default: lo step gira sotto `set +e`, quindi un openssl mancante
+          # non fermerebbe niente e il recinto si aprirebbe come `::stop-commands::` senza
+          # token — fallendo in silenzio su un controllo di sicurezza, che e' il modo in cui
+          # una protezione smette di esistere senza che nulla diventi rosso.
+          STOP_TOKEN="$(openssl rand -hex 16)"
+          : "${STOP_TOKEN:?token del recinto vuoto: openssl non ha prodotto niente}"
+          # Ripristino anche se lo step muore: senza, un kill da `timeout-minutes` lascia i
+          # comandi disabilitati per tutto il resto del job, comprese le annotazioni della
+          # run degradata — cioe' proprio quella che si voleva leggere.
+          #
+          # DUE trap e non uno, misurato: `trap ... EXIT` da solo NON scatta su SIGTERM, che
+          # e' il caso per cui serve. Il secondo trasforma il segnale in un `exit`, cosi' il
+          # primo parte una volta sola su entrambi i percorsi. Contro SIGKILL non si puo'
+          # niente, e nessun trap lo cattura.
+          trap 'echo "::${STOP_TOKEN}::"' EXIT
+          trap 'exit 143' TERM INT
+          echo "::stop-commands::${STOP_TOKEN}"
           # stderr su file E a video: lo step dopo ne ha bisogno per sapere quale sessione
           # cercare su Langfuse e quante chiamate sono davvero partite. Redirezione semplice
           # e `cat` dopo, non `tee` in process substitution: quella lascia un sottoprocesso
@@ -69,6 +103,7 @@ jobs:
           python -m council "$QUESTION" 2>council.stderr
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
           cat council.stderr >&2
+          echo "::${STOP_TOKEN}::"
 
       # Il contratto d'uscita è il test. 3 = degradato: la risposta esiste ma un
       # votante è caduto, ed è ESATTAMENTE il caso che questo job deve scoprire.
