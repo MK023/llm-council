@@ -5,6 +5,41 @@ All notable changes to this project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).  
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A retryable code delivered in the body was never retried.** On 2026-08-31 the weekly
+  E2E lost its chairman — and with it the whole run — to
+  `{"error": {"message": "Internal server error", "code": 502}}`, returned with **HTTP 200**.
+  `attempts=1`. `502` has been in `RETRYABLE_STATUS_CODES` since #28, but that set was only
+  ever read from `except HTTPError`, and a 200 never raises one. The intent and the mechanism
+  had disagreed from the start, and the seam was invisible because both halves looked right
+  in isolation: a documented retry list, and a comment declaring body errors semantic.
+  `_validate_response` now carries the body's `code` onto `OpenRouterError`, and `call`
+  routes it through the same set. Errors with no code — a refusal, a truncation, a malformed
+  schema, the size cap — stay status-less and still fail fast, because **a fault we cannot
+  name is not a fault we can time**. Three voters survive a hiccup; a chairman did not.
+- **The retries were about to cost the diagnosis.** The first draft of the fix above raised
+  `All 3 attempts failed … OpenRouterError HTTP 502` and dropped both the upstream provider's
+  own words and the `request_id` — the two fields you take to OpenRouter to ask what happened.
+  A persistent 502 would have become *less* diagnosable than a plain 400. Both are carried
+  through now, and the body error is capped at 500 characters like the HTTPError branch beside
+  it, since that text is attacker-influenced and now travels one hop further than it did.
+
+### Testing
+
+- **Three assertions that a green suite did not miss because it was wrong, but because it was
+  not looking.** All of `client.py` was at 100% line-and-branch coverage over the fix above,
+  and three mutants still survived it: deleting the `isinstance(code, int)` guard (`502.0 in
+  RETRYABLE_STATUS_CODES` is `True`, so a float code would have bought three attempts),
+  making the `MAX_RESPONSE_BYTES` raise retryable (an oversized body from a possibly
+  compromised endpoint would have been pulled down three times instead of once), and dropping
+  the diagnosis above. The size-cap property in particular had never been asserted at all — it
+  held **by omission of a parameter**, and the tests around it used `return_value`, so they
+  would have passed at three attempts too. Each is now pinned by a test that fails when the
+  mutant is applied and passes when it is not, verified one at a time.
+
 ## [0.4.0] — 2026-08-14
 
 Two nights, eighteen PRs (#13–#30). Same shape as 0.3.0: defences that existed on paper
@@ -194,6 +229,7 @@ Anthropic models are intentionally excluded from both voter and chairman roles (
 <!-- Le intestazioni usano la convenzione Keep a Changelog `## [x.y.z]`, che senza queste
      definizioni e' solo grafica: parentesi quadre che sembrano link e non lo sono. Sono
      state aggiunte il 2026-08-16, quando i tag hanno reso possibile il confronto vero. -->
+[Unreleased]: https://github.com/MK023/llm-council/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/MK023/llm-council/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/MK023/llm-council/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/MK023/llm-council/releases/tag/v0.2.0

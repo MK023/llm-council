@@ -97,6 +97,169 @@ class TestRetryLogic(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 3)
 
 
+class TestErrorInsideBodyRetry(unittest.TestCase):
+    """OpenRouter delivers upstream failures inside a 200 body, not as an HTTP status.
+
+    On 2026-08-31 the weekly E2E lost its chairman — and with it the whole run — to
+    `{"error": {"message": "Internal server error", "code": 502}}` returned with HTTP 200.
+    `attempts=1`: no retry, although 502 is listed in RETRYABLE_STATUS_CODES. The list was
+    only ever consulted from `except HTTPError`, which a 200 never reaches.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_body_error_502_retries_then_succeeds(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """The exact payload that killed the 2026-08-31 chairman."""
+        mock_urlopen.side_effect = [
+            _mock_response({"error": {"message": "Internal server error", "code": 502}}),
+            _mock_response(_OK_BODY),
+        ]
+        result = self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(result.content, "ok")
+        self.assertEqual(result.attempts, 2)
+        mock_sleep.assert_called_once()
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_body_error_502_exhausts_retries_and_names_the_code(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A persistent 502 must still surface its code — the code IS the diagnosis."""
+        mock_urlopen.return_value = _mock_response({"error": {"code": 502}})
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(mock_urlopen.call_count, 3)
+        self.assertEqual(ctx.exception.status_code, 502)
+        self.assertIn("502", str(ctx.exception))
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_body_error_400_fails_fast(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A caller bug in the body is still a caller bug: retrying wastes quota."""
+        mock_urlopen.return_value = _mock_response({"error": {"code": 400, "message": "bad"}})
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertEqual(ctx.exception.status_code, 400)
+        mock_sleep.assert_not_called()
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_body_error_without_a_code_fails_fast(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """No code means no transient diagnosis: fail fast rather than guess.
+
+        Both shapes, because they take different branches: a string `error` never reaches
+        `.get("code")` at all, a dict without `code` reaches it and gets None. The first
+        draft tested only the string and so left the branch it meant to cover untested.
+        """
+        for body in ({"error": "model not found"}, {"error": {"message": "no code here"}}):
+            with self.subTest(body=body):
+                mock_urlopen.reset_mock()
+                mock_urlopen.return_value = _mock_response(body)
+                with self.assertRaises(OpenRouterError) as ctx:
+                    self.client.call("test/model", self.messages, max_tokens=10)
+                self.assertEqual(mock_urlopen.call_count, 1)
+                self.assertIsNone(ctx.exception.status_code)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_non_int_code_is_not_a_code(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """`502.0 in RETRYABLE_STATUS_CODES` is True — the isinstance guard is the defence.
+
+        Without it a float, or a numeric string coerced somewhere upstream, would buy three
+        attempts off a provider we never agreed to trust that far. This assertion exists
+        because the mutant that deletes the guard survived the whole suite.
+        """
+        for code in (502.0, "502", True, None):
+            with self.subTest(code=code):
+                mock_urlopen.reset_mock()
+                mock_urlopen.return_value = _mock_response({"error": {"code": code}})
+                with self.assertRaises(OpenRouterError) as ctx:
+                    self.client.call("test/model", self.messages, max_tokens=10)
+                self.assertEqual(mock_urlopen.call_count, 1)
+                self.assertNotEqual(ctx.exception.status_code, 502)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_the_size_cap_still_costs_exactly_one_request(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """An oversized body is a compromised endpoint, and gets ONE chance, not three.
+
+        The property held only because the size-cap raise omits `status_code`. Omission is
+        not an assertion: the existing size-cap tests use `return_value`, so they would have
+        passed at three attempts too. This pins the request count itself.
+        """
+        mock_urlopen.return_value = _mock_response(b"x" * (MAX_RESPONSE_BYTES + 1))
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(mock_urlopen.call_count, 1)
+        self.assertIsNone(ctx.exception.status_code)
+        mock_sleep.assert_not_called()
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_exhaustion_keeps_the_provider_words_and_the_request_id(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """The diagnosis must survive the retries, or widening them made things worse.
+
+        `request_id` and the upstream provider's name are the two fields you take to
+        OpenRouter to ask what happened. The first draft of this retry path dropped both,
+        making a persistent 502 less diagnosable than a plain 400.
+        """
+        body = {
+            "error": {
+                "message": "Provider returned error",
+                "code": 502,
+                "metadata": {"provider_name": "Novita"},
+            }
+        }
+        mock_urlopen.return_value = _mock_response(body, {"x-request-id": "req-chairman"})
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("chair/model", self.messages, max_tokens=10)
+        self.assertEqual(mock_urlopen.call_count, 3)
+        self.assertEqual(ctx.exception.request_id, "req-chairman")
+        self.assertIn("Novita", str(ctx.exception))
+        self.assertIn("502", str(ctx.exception))
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_semantic_failures_still_fail_fast(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A refusal and a truncation are verdicts, not hiccups — retrying changes nothing."""
+        for body in (
+            {"choices": [{"message": {"content": "", "refusal": "policy"}}]},
+            {
+                "choices": [
+                    {
+                        "message": {"content": "", "reasoning": "thinking"},
+                        "finish_reason": "length",
+                    }
+                ]
+            },
+        ):
+            with self.subTest(body=body):
+                mock_urlopen.reset_mock()
+                mock_urlopen.return_value = _mock_response(body)
+                with self.assertRaises(OpenRouterError):
+                    self.client.call("test/model", self.messages, max_tokens=10)
+                self.assertEqual(mock_urlopen.call_count, 1)
+
+
 class TestResponseValidation(unittest.TestCase):
     """Schema validation of API responses."""
 
