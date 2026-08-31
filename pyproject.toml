@@ -72,6 +72,10 @@ pytest_add_cli_args_test_selection = [
     # Il commento sopra la descriveva gia' per esteso e non e' bastato: il gate ha bisogno
     # di una riga qui ogni volta che un test nuovo importa da `scripts/`.
     "--ignore=tests/test_langfuse_check.py",
+    # Legge `.github/workflows/`, che mutmut non copia: stessa ragione di
+    # `test_packaging.py` e `test_security_doc.py` — assunzioni sul filesystem che
+    # nell'albero copiato non valgono, e nessun mutante di `council/` che possa uccidere.
+    "--ignore=tests/test_workflow_fences.py",
 ]
 
 [tool.ruff]

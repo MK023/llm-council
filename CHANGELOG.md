@@ -7,6 +7,38 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Security — "printed as text" had a consumer where it was false
+
+- **In GitHub Actions a log line starting at column 0 with `::` is a command to the runner**,
+  not text: `::error::`, `::add-mask::`, `::stop-commands::`. The weekly E2E prints three
+  answers, three rankings and a chairman synthesis — **all written by language models** —
+  into the log of a public repository. `SECURITY.md` claimed under LLM05 that model output
+  "is printed as text and never executed", and for every consumer but this one it was true.
+- **The answers are not sanitised, and must not be.** They are the tool's own product, they
+  are multi-line markdown, and mutilating them would break what the council exists to
+  produce. So the text is not filtered — the command channel is closed around it. `e2e.yml`
+  wraps the run in `::stop-commands::` with a token from `openssl rand -hex 16`, *"randomly
+  generated and unique for each run"* as GitHub's documentation requires: with a fixed token
+  in a public repo, a model could turn commands back on itself. `$GITHUB_OUTPUT` is
+  unaffected — it is a file, not a workflow command.
+- **The fence itself now has a gate**, and this is the part the two reviews agreed on. The
+  sanitising half had five tests; the half protecting the *answers* was fifteen lines of YAML
+  that anyone could move or delete with every check green, while `SECURITY.md` asserted it in
+  prose. `tests/test_workflow_fences.py` reads the workflows and pins the fence, the per-run
+  token, the `:?` guard against an empty one, the traps, and the job wall clock. Writing it
+  found three real defects in the same hour: `probe.yml` had no fence at all and no
+  `timeout-minutes` — it prints third-party catalogue strings into the same public log — a
+  missing `openssl` would have opened the fence with an *empty* token under `set +e`, and
+  `trap … EXIT` **does not fire on SIGTERM**, measured, which is the case it was added for.
+- **Error messages are flattened to a single line in `OpenRouterError`.** They carry the
+  provider's own words, and those words now reach a second line-oriented parser:
+  `council.stderr`, which `scripts/langfuse_check.py` reads one JSON object per line. A
+  newline in that text is not cosmetic — it is a way to add a record, and the review of #39
+  reproduced three generations that never happened. The flattening lives in the constructor
+  and not at each `print`, because every message converges there and a guard per call site is
+  a guard that gets missed at the next call site. C0 controls and DEL go with it: ESC drives
+  terminal escape sequences, NUL truncates in some consumers, and a diagnostic is one line.
+
 ### Fixed — the monitor's own failure modes, found by reviewing it
 
 - **"Always exit 0" was written as a list of exception types, which is not a promise.**

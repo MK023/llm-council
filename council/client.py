@@ -25,16 +25,53 @@ from council.config import (
     USER_AGENT,
 )
 
+# Everything Python treats as a line terminator, plus the rest of C0 and DEL, flattened to
+# spaces. The newline is the one that matters: an error message carries the PROVIDER's words,
+# and those words reach two line-oriented parsers — the public log of the weekly E2E, where
+# `::something::` at column 0 is a GitHub workflow command, and `council.stderr`, where
+# `scripts/langfuse_check.py` reads one JSON object per line and would count generations a
+# provider invented. ESC drives terminal escape sequences and NUL truncates in some consumers.
+#
+# NEL, LINE SEPARATOR and PARAGRAPH SEPARATOR are in the table although the consumers that
+# exist today do not split on them: `for line in fh` honours only `\n`, `\r`, `\r\n`. They are
+# here because `str.splitlines()` DOES split on them, that idiom is already used elsewhere in
+# this codebase, and the review found the test asserting `len(splitlines()) == 1` — an oracle
+# stronger than the implementation could keep. Widening the table is cheaper than weakening
+# the promise, and leaves nothing latent for whoever rewrites the reader.
+_LINE_TERMINATORS: Final[tuple[int, ...]] = (0x85, 0x2028, 0x2029)
+_CONTROL_CHARS: Final[dict[int, str]] = (
+    {code: " " for code in range(0x20)} | {0x7F: " "} | {code: " " for code in _LINE_TERMINATORS}
+)
+
 
 class OpenRouterError(Exception):
-    """Raised when the OpenRouter API returns an unrecoverable error."""
+    """Raised when the OpenRouter API returns an unrecoverable error.
+
+    The message is flattened to a single line HERE and not at each `raise`, because every
+    **OpenRouterError** converges on this constructor and a guard per call site is a guard
+    that gets missed at the next call site. Our own messages are single-line already, so
+    nothing but provider text changes.
+
+    It is deliberately NOT a claim about `council.stderr` as a whole: `__main__.py` writes
+    there from several other places, and the review of 2026-08-31 reproduced a forged JSON
+    line through `--env` with a newline in the path. That path is not reachable from the
+    weekly E2E, which passes no `--env` — but the sentence used to say "every message", and
+    a defence described wider than it is becomes a defence nobody re-checks.
+
+    `str(message)` and not `message`: the annotation says `str`, Python does not enforce it,
+    and an `AttributeError` raised *inside* this constructor would escape every
+    `except OpenRouterError` in the codebase.
+    """
 
     def __init__(
         self, message: str, status_code: int | None = None, request_id: str | None = None
     ) -> None:
-        super().__init__(message)
+        super().__init__(str(message).translate(_CONTROL_CHARS))
         self.status_code = status_code
-        self.request_id = request_id
+        # The request id comes from a response header, so it carries the provider's bytes
+        # too — an obs-fold continuation can put a CRLF in it — and it is printed beside the
+        # message by `__main__.py`. Same table, same reason.
+        self.request_id = None if request_id is None else str(request_id).translate(_CONTROL_CHARS)
 
 
 @dataclass(frozen=True)

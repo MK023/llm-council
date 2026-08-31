@@ -106,6 +106,114 @@ class TestRetryLogic(unittest.TestCase):
         self.assertEqual(mock_urlopen.call_count, 3)
 
 
+class TestErrorTextCannotForgeLines(unittest.TestCase):
+    """An error message carries the provider's words, and those words reach two parsers.
+
+    The text inside `{"error": ...}` is chosen upstream of us. It is printed to stderr, where
+    `scripts/langfuse_check.py` now parses one JSON object per line, and into the public log
+    of the weekly E2E, where a line starting at column 0 with `::` is a GitHub workflow
+    command. A newline in that text is therefore not cosmetic: it is a way to add a line.
+
+    Sanitising in the constructor rather than at each `print` is deliberate — every message
+    converges here, and a guard per call site is a guard that will be forgotten at the next
+    one.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    def _message_for(self, error: object) -> str:
+        with (
+            patch("council.client.time.sleep"),
+            patch("council.client.urllib.request.urlopen") as mock_urlopen,
+        ):
+            mock_urlopen.return_value = _mock_response({"error": error})
+            with self.assertRaises(OpenRouterError) as ctx:
+                self.client.call("test/model", self.messages, max_tokens=10)
+        return str(ctx.exception)
+
+    def test_a_provider_message_cannot_add_a_line(self) -> None:
+        for payload in (
+            "boom\n::error::forged",
+            "boom\r\n::add-mask::secret",
+            "boom\r::stop-commands::tok",
+            {"message": 'boom\n{"trace_id": "x", "generation_id": "fake"}'},
+        ):
+            with self.subTest(payload=payload):
+                message = self._message_for(payload)
+                self.assertNotIn("\n", message)
+                self.assertNotIn("\r", message)
+
+    def test_control_characters_do_not_survive(self) -> None:
+        """ESC drives terminal escape sequences; NUL truncates in some consumers.
+
+        Every character asserted against must appear in the INPUT. The first draft checked
+        for `\\x7f` in a payload that never contained one — an assertion about an absent
+        character is vacuously true, and the mutant that drops DEL from the table survived
+        the whole suite because of it.
+        """
+        codes = [*range(0x20), 0x7F, 0x85, 0x2028, 0x2029]
+        hostile = "".join(chr(code) for code in codes)
+        message = self._message_for(f"red \x1b[31mtext\x1b[0m{hostile}end")
+        for code in codes:
+            with self.subTest(code=hex(code)):
+                self.assertNotIn(chr(code), message)
+        self.assertIn("end", message)
+
+    def test_the_line_count_promise_holds_for_every_terminator_python_knows(self) -> None:
+        """`splitlines()` splits on NEL, LS and PS, which are not C0.
+
+        The first draft asserted `len(splitlines()) == 1` while feeding only `\\n` — an oracle
+        stronger than the table could keep, passing by luck. Not exploitable against today's
+        reader (`for line in fh` honours only `\\n`/`\\r`/`\\r\\n`), but this codebase already
+        uses `.splitlines()` elsewhere, so the gap was one refactor from opening.
+        """
+        forged = '{"ts": 1, "trace_id": "hijack", "generation_id": "gen-fake"}'
+        for terminator in ("\n", "\r", "\r\n", "\x85", " ", " ", "\v", "\f"):
+            with self.subTest(terminator=repr(terminator)):
+                message = self._message_for(f"boom{terminator}{forged}")
+                self.assertEqual(len(message.splitlines()), 1)
+
+    def test_the_request_id_is_flattened_too(self) -> None:
+        """It comes from a response header — an obs-fold continuation can put a CRLF in it —
+        and `__main__.py` prints it beside the message.
+        """
+        exc = OpenRouterError("ok", request_id="req\r\n::error::forged")
+        self.assertEqual(exc.request_id, "req  ::error::forged")
+        self.assertIsNone(OpenRouterError("ok").request_id)
+
+    def test_a_non_string_message_does_not_raise_inside_the_constructor(self) -> None:
+        """An `AttributeError` raised here would escape every `except OpenRouterError`."""
+        self.assertIn("502", str(OpenRouterError(502)))  # type: ignore[arg-type]
+
+    def test_a_forged_json_line_cannot_reach_a_line_parser(self) -> None:
+        """The concrete consequence: `langfuse_check.read_telemetry` counts one object per
+        line, so a newline in this text would let a provider invent generations that never
+        happened.
+        """
+        forged = '{"ts": 1, "trace_id": "hijack", "generation_id": "gen-fake"}'
+        message = self._message_for(f"boom\n{forged}\n{forged}")
+        self.assertEqual(len(message.splitlines()), 1)
+        # A space and not an empty string: deleting the newline outright would glue the
+        # words on either side of it. Safe either way, unreadable one way — and this project
+        # has already paid once for a diagnosis that was technically present and useless.
+        self.assertIn("boom {", message)
+
+    def test_ordinary_text_is_left_alone(self) -> None:
+        """Sanitising must not mangle the diagnosis it exists to protect."""
+        message = self._message_for({"message": "Provider returned error", "code": 502})
+        self.assertIn("Provider returned error", message)
+        self.assertIn("502", message)
+
+    def test_our_own_messages_are_unchanged(self) -> None:
+        """Every OpenRouterError goes through this, including the ones we write ourselves."""
+        self.assertEqual(
+            str(OpenRouterError("All 3 attempts failed for model='x': HTTPError HTTP 502")),
+            "All 3 attempts failed for model='x': HTTPError HTTP 502",
+        )
+
+
 class TestRateLimitBackoff(unittest.TestCase):
     """A 429 waits for a window to reopen; a 5xx waits for a moment. Different waits.
 
