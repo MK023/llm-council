@@ -156,8 +156,16 @@ class OpenRouterClient:
             except (urllib.error.URLError, json.JSONDecodeError) as exc:
                 # Transport-layer transient errors: retry
                 last_error = exc
-            # Note: OpenRouterError from _validate_response / size cap propagates immediately —
-            # it is a semantic API error, not a transient transport failure
+            except OpenRouterError as exc:
+                # A body-delivered error carries a status code only when OpenRouter named
+                # one; the SAME list decides, because a 502 is a 502 whether it arrives in
+                # the status line or in the payload. On 2026-08-31 it arrived in the payload
+                # and killed a whole run at attempts=1: this clause is that hole.
+                # Everything else here is a verdict, not a hiccup — a refusal, a truncation,
+                # a malformed schema, the size cap — and carries no code, so it propagates.
+                if exc.status_code not in RETRYABLE_STATUS_CODES:
+                    raise
+                last_error = exc
 
             if attempt < MAX_RETRIES:
                 backoff = RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
@@ -169,12 +177,22 @@ class OpenRouterClient:
         # call for opposite decisions — change seat, or wait. The status code is the
         # whole diagnosis and it was already in hand.
         cause = type(last_error).__name__ if last_error else "unknown"
-        status = getattr(last_error, "code", None)
+        # HTTPError spells it `code`, OpenRouterError spells it `status_code`. Reading only
+        # the first would drop the diagnosis exactly for the body-delivered errors this
+        # retry path was widened to cover.
+        status = getattr(last_error, "code", None) or getattr(last_error, "status_code", None)
+        # A body-delivered error carries the provider's own words and the request id. The
+        # first draft of this widening kept neither, and so made a PERSISTENT 502 less
+        # diagnosable than a 400 — dropping the two fields you take to OpenRouter to ask
+        # what happened, in precisely the case that kills a run. Caught by the adversarial
+        # review on 2026-08-31; every gate was green over it, coverage included.
+        detail = str(last_error) if isinstance(last_error, OpenRouterError) else ""
         raise OpenRouterError(
             f"All {MAX_RETRIES} attempts failed for model='{model}': "
-            f"{cause}{f' HTTP {status}' if status else ''}",
+            f"{cause}{f' HTTP {status}' if status else ''}{f' — {detail}' if detail else ''}",
             status_code=status,
-        )
+            request_id=getattr(last_error, "request_id", None),
+        ) from last_error
 
     def _request(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
         req = urllib.request.Request(
@@ -206,7 +224,25 @@ class OpenRouterClient:
         if not isinstance(data, dict):
             raise OpenRouterError("Response is not a JSON object", request_id=request_id)
         if data.get("error"):
-            raise OpenRouterError(f"API error: {data['error']}", request_id=request_id)
+            # OpenRouter answers HTTP 200 and puts the upstream provider's failure in the
+            # body: {"error": {"message": "Internal server error", "code": 502}}. Carry the
+            # code so `call` can route it through RETRYABLE_STATUS_CODES like any other 502.
+            # Anything else — no code, or a code that is not an int — stays status-less and
+            # therefore non-retryable: a fault we cannot name is not a fault we can time.
+            err = data["error"]
+            code = err.get("code") if isinstance(err, dict) else None
+            # `isinstance(code, int)` is load-bearing and not decoration: `502.0 in
+            # RETRYABLE_STATUS_CODES` is True, so dropping the guard would make a float
+            # code retryable. TestErrorInsideBodyRetry pins it — the mutant survived 264
+            # green tests until it did.
+            # The [:500] matches the cap on the HTTPError branch above: this text is
+            # attacker-influenced and now travels further than it used to, into the
+            # exhaustion message as well.
+            raise OpenRouterError(
+                f"API error: {str(err)[:500]}",
+                status_code=code if isinstance(code, int) else None,
+                request_id=request_id,
+            )
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             raise OpenRouterError("Response missing 'choices' array", request_id=request_id)
