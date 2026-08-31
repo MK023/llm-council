@@ -7,6 +7,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — the half of the telemetry nothing was measuring
+
+- **`scripts/langfuse_check.py`, run by the weekly E2E.** Ingestion into Langfuse does not
+  start in this code: it goes through OpenRouter Broadcast, a checkbox in an account, and no
+  unit test can reach a checkbox in someone's dashboard. So that half was measured by nothing
+  at all — it worked, but by luck rather than by proof, and nobody had looked until
+  2026-08-31. The script asks Langfuse whether the run that just happened arrived, and prints
+  the 30-day spend beside it.
+- **It warns and never fails**, always `exit 0`, and a missing stderr file or an unreachable
+  API is a warning too. A guard that kills what it guards is worse than no guard: the
+  council's verdict belongs to the step before.
+- **The alarm is not on the run it just watched.** Langfuse documents up to **15 minutes** of
+  ingestion delay for third-party exporters, and Broadcast is one; a 90-second poll shouting
+  "data loss" would be shouting at a documented delay, which is how a monitor teaches everyone
+  to ignore it. The alarm sits where the delay cannot reach: *no complete council run in the
+  last **8** days*. Eight and not seven because GitHub's scheduler slipped nearly seven hours
+  on 2026-08-31 — a window equal to the schedule fires on the wrong system.
+- **Three details that came from measuring the live API, not from reading its docs.** Filter
+  by `sessionId`, never `traceId`: when a stage fails OpenRouter mints its own trace id for
+  that call, so one run lands as two traces sharing one session — filtering by trace counts
+  6 of 7 and reports a loss that never happened. Compare `arrived >= sent`, never `==`: a
+  failed attempt still produces a generation there while the telemetry records no
+  `generation_id` for it. And `LANGFUSE_BASE_URL` has **no default**, because Langfuse Cloud
+  has separate EU and US regions and the wrong one does not fail — it answers `200` with zero
+  results, the most convincing false alarm available.
+
 ### Fixed — a rate limit is not a hiccup
 
 - **The same seat fell the same way twice, and the retry loop waited three seconds.** On
