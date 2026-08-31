@@ -29,7 +29,7 @@ Mapped to the [OWASP Top 10 for LLM Applications **2025**](https://genai.owasp.o
 | **LLM07** | System Prompt Leakage | **Not applicable, by design.** The project has no confidential system prompt: `stage2_prompt` and `stage3_prompt` live in `config.py` in a public MIT repository. Nothing to leak — and that is the point. A prompt is not a security control; if secrecy of the prompt mattered, the design would be wrong. |
 | **LLM08** | Vector and Embedding Weaknesses | **Out of scope.** No RAG, no vector database, no embeddings. Nothing is retrieved: the council reasons only over the question and the voters' own answers. |
 | **LLM09** | Misinformation | **Mitigated — this is the project's subject.** The whole point is countering single-model sycophancy. Divergences between voters are surfaced explicitly, the chairman output is framed as "recommendation, not verdict", and a degraded run exits **3**, not 0 — the caller is told that the contradiction was weaker than intended. Since 2026-08-14 that includes a **truncated** answer (`finish_reason='length'`), not only a fallen voter: a cut answer is present, valid and incomplete, so it passes every check about shape while saying less than it appears to. Ranking half-answers and synthesising them is misinformation produced by the tool itself. See `tests/test_cli.py::TestExitContract` and `tests/test_cli.py::TestTruncationIsNotSuccess`. |
-| **LLM10** | Unbounded Consumption | **Mitigated.** Input capped at 4000 chars, per-stage token limits, a 50k cumulative ceiling that aborts the run (exit 4), 256KB response cap, 90s hard timeout, retry only on transient errors, plus a $5 spend cap and time expiry on the OpenRouter key. Was "LLM04 Model DoS" in the 2023 list. |
+| **LLM10** | Unbounded Consumption | **Mitigated.** Input capped at 4000 chars, per-stage token limits, a 50k cumulative ceiling that aborts the run (exit 4), 256KB response cap, 90s hard timeout, retry only on transient errors, plus a $5 spend cap and time expiry on the OpenRouter key. Since 2026-08-31 the retry wait can also be set by the provider via `Retry-After`: it is **capped at 30s** and validated to a non-negative integer, because a value chosen outside this trust boundary reaches `time.sleep`, and the scheduled run is bounded independently by `timeout-minutes: 15` on the job. See "Network & transport" below for the full wait policy. Was "LLM04 Model DoS" in the 2023 list. |
 
 ### MITRE ATLAS
 
@@ -87,6 +87,19 @@ careers and personal decisions, the second is the one that cannot be undone.
   quota and masking the bug. *Corrected 2026-08-14: this line used to say "5xx, fail-fast on
   4xx", which was both too broad and too narrow — the set retried `504`, which OpenRouter does
   not document, and skipped `524`/`529`, which it emits exactly when a provider is under stress.*
+- **Wait length: two mechanisms, and they are not the same one.** The short backoff
+  `(1, 2, 4)` applies to every transient code. On `429` and `503` OpenRouter documents that it
+  *"may include a standard HTTP `Retry-After` response header"*, and that hint is obeyed —
+  **capped at 30s**, because the number is chosen by a party we route to without fallbacks and
+  an hour-long hint would otherwise park a run for an hour. A `429` with no hint waits a
+  20s fallback instead: a rate-limit window does not reopen in three seconds, which is all
+  the short backoff actually spends. Anything that is not a plain non-negative integer is
+  treated as absent — a negative would reach `time.sleep` and raise, ending the run.
+  *Added 2026-08-31, after the weekly E2E lost the same seat to a Stage 2 `429` twice.*
+- **Job wall clock.** `e2e.yml` carries `timeout-minutes: 15`. It had none, so it inherited
+  GitHub's six-hour default: the waits above are per-attempt, and a provider answering `429`
+  with a high hint stretches a run without any ceiling in the code stopping it. A budget
+  counted in the client would be a second accounting destined to drift from the first.
 - Response body size cap: **256KB** hard limit (defense against compromised-endpoint streaming)
 - Hard request timeout: **90s** per HTTP call
 

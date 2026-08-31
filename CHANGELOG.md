@@ -7,6 +7,32 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — a rate limit is not a hiccup
+
+- **The same seat fell the same way twice, and the retry loop waited three seconds.** On
+  2026-08-24 and again on 2026-08-31 the weekly E2E lost
+  `mistralai/mistral-small-3.2-24b-instruct` to HTTP 429 in Stage 2, after three attempts
+  spanning **three** seconds — the loop sleeps only *between* attempts, so with
+  `MAX_RETRIES=3` it spends `1s` and `2s` and never reaches the `4` in the tuple. A
+  rate-limit window does not reopen in three seconds. OpenRouter documents the answer and
+  the client was throwing it away: *"Respect the `Retry-After` header before retrying"*, on
+  **429 and 503** both. The client read the error body and never the headers.
+  The hint is now obeyed where OpenRouter documents sending one, **capped at 30s** — the
+  number is chosen by a provider we reach without fallbacks, and an hour-long hint would
+  park a run for an hour. A 429 with no hint waits a 20s fallback; 503 without a hint keeps
+  the short backoff, because the long wait is a guess about a *window* and only a rate limit
+  has one. An unparsable or negative value counts as absent: `time.sleep(-1)` raises, and
+  that exception would escape the loop and end the run.
+- **A 429 in the body waited 3s while the same 429 in the status line waited 40.** The same
+  class PR #36 closed for 502 was left open for 429 the day after. Both channels now reach
+  the rate-limit wait.
+- **`e2e.yml` had no `timeout-minutes` at all**, so it inherited GitHub's six-hour default.
+  The new waits are per-attempt: a provider answering 429 with a high hint stretches a run
+  from ~3 to ~7 minutes, and nothing in the code stopped it. The job is now capped at 15
+  minutes. A wait budget counted inside the client would have been a second accounting
+  destined to drift from the first; a wall clock bounds every way of hanging, including the
+  ones not yet imagined.
+
 ### Fixed
 
 - **A retryable code delivered in the body was never retried.** On 2026-08-31 the weekly

@@ -22,6 +22,17 @@ jobs:
   live-run:
     name: Council contro l'API vera
     runs-on: ubuntu-latest
+    # Il job non ne aveva NESSUNO, quindi ereditava il default di GitHub: sei ore.
+    #
+    # Serve perche' le attese da rate limit sono per-tentativo: un provider che risponde
+    # sempre 429 con un `Retry-After` alto porta una run da ~3 minuti a 7, e ogni seggio e'
+    # servito da un provider solo (`allow_fallbacks: false`, la garanzia ZDR). Un tetto in
+    # codice sul totale delle attese sarebbe una seconda contabilita' destinata a divergere;
+    # questo limita OGNI modo di restare appesi, compresi quelli non ancora immaginati.
+    #
+    # 15 e non 30: sopra i 15 il monitor Sentry — `max_runtime: 30` piu' in basso — non
+    # aggiunge niente che questo non dica prima.
+    timeout-minutes: 15
     permissions:
       contents: read
     # Il cron gira solo sul repo di origine, mai sui fork che clonano il progetto.

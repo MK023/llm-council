@@ -10,7 +10,14 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 from council.client import OpenRouterClient, OpenRouterError
-from council.config import MAX_RESPONSE_BYTES
+from council.config import (
+    MAX_RESPONSE_BYTES,
+    MAX_RETRIES,
+    RATE_LIMIT_FALLBACK_SECONDS,
+    RETRY_AFTER_CAP_SECONDS,
+    RETRY_BACKOFF_SECONDS,
+    VOTER_MODELS,
+)
 
 
 def _mock_response(
@@ -27,8 +34,10 @@ def _mock_response(
     return mock_resp
 
 
-def _http_error(code: int, body: bytes = b"") -> urllib.error.HTTPError:
-    return urllib.error.HTTPError("https://x", code, "err", {}, io.BytesIO(body))  # type: ignore[arg-type]
+def _http_error(
+    code: int, body: bytes = b"", headers: dict[str, str] | None = None
+) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError("https://x", code, "err", headers or {}, io.BytesIO(body))  # type: ignore[arg-type]
 
 
 _OK_BODY: dict[str, Any] = {
@@ -95,6 +104,221 @@ class TestRetryLogic(unittest.TestCase):
             self.client.call("test/model", self.messages, max_tokens=10)
         self.assertIn("All 3 attempts failed", str(ctx.exception))
         self.assertEqual(mock_urlopen.call_count, 3)
+
+
+class TestRateLimitBackoff(unittest.TestCase):
+    """A 429 waits for a window to reopen; a 5xx waits for a moment. Different waits.
+
+    Twice — 2026-08-24 and 2026-08-31 — the weekly E2E lost the same seat to a Stage 2 429
+    after three attempts spanning three seconds. OpenRouter documents `Retry-After` on that
+    response and the client read only the body, never the headers.
+    """
+
+    def setUp(self) -> None:
+        self.client = OpenRouterClient("sk-or-v1-test-key")
+        self.messages = [{"role": "user", "content": "test"}]
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_retry_after_is_obeyed(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+        mock_urlopen.side_effect = [
+            _http_error(429, headers={"Retry-After": "12"}),
+            _mock_response(_OK_BODY),
+        ]
+        result = self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(result.attempts, 2)
+        mock_sleep.assert_called_once_with(12)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_retry_after_is_capped(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+        """An hour-long hint must not park the run for an hour."""
+        mock_urlopen.side_effect = [
+            _http_error(429, headers={"Retry-After": "3600"}),
+            _mock_response(_OK_BODY),
+        ]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(RETRY_AFTER_CAP_SECONDS)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_429_without_a_hint_uses_the_rate_limit_fallback(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """The exact shape of the two E2E failures: a 429 and no header to read."""
+        mock_urlopen.side_effect = [_http_error(429), _mock_response(_OK_BODY)]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(RATE_LIMIT_FALLBACK_SECONDS)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_server_error_keeps_the_short_backoff(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A 502 waits for an instant, not for a window: the long waits are 429-only."""
+        mock_urlopen.side_effect = [_http_error(502), _mock_response(_OK_BODY)]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(RETRY_BACKOFF_SECONDS[0])
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_503_hint_is_obeyed_too(self, mock_urlopen: MagicMock, mock_sleep: MagicMock) -> None:
+        """OpenRouter documents Retry-After on 429 **and** 503, and a hint is an instruction.
+
+        The first draft asserted the opposite here, on a comment that claimed 429 was the
+        only code. The docs say: *"On 429 Too Many Requests and 503 Service Unavailable
+        responses, OpenRouter may include a standard HTTP Retry-After response header"*.
+        A test written from the code's own claim only ever confirms the claim.
+        """
+        mock_urlopen.side_effect = [
+            _http_error(503, headers={"Retry-After": "25"}),
+            _mock_response(_OK_BODY),
+        ]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(25)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_503_without_a_hint_keeps_the_short_backoff(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """The long fallback is a guess about a rate-limit window: 503 has no window."""
+        mock_urlopen.side_effect = [_http_error(503), _mock_response(_OK_BODY)]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(RETRY_BACKOFF_SECONDS[0])
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_an_undocumented_code_ignores_the_header(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """502 is not on OpenRouter's Retry-After list: obeying it there invents policy."""
+        mock_urlopen.side_effect = [
+            _http_error(502, headers={"Retry-After": "25"}),
+            _mock_response(_OK_BODY),
+        ]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(RETRY_BACKOFF_SECONDS[0])
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_429_in_the_body_waits_like_a_429_in_the_status_line(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """OpenRouter puts provider errors in a 200 body — a rate limit among them.
+
+        Without this the same diagnosis got 3 seconds through one channel and 40 through the
+        other, and the slow one is the channel an attacker does not pick. It is the same
+        class PR #36 closed for 502, left open for 429 the day after.
+        """
+        mock_urlopen.return_value = _mock_response({"error": {"code": 429, "message": "slow down"}})
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(
+            [call.args[0] for call in mock_sleep.call_args_list],
+            [RATE_LIMIT_FALLBACK_SECONDS, RATE_LIMIT_FALLBACK_SECONDS],
+        )
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_an_unparsable_hint_falls_back_instead_of_crashing(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """Retry-After also has an HTTP-date form, and a hostile endpoint can send anything.
+
+        The header is attacker-influenced input at a trust boundary: it must never reach
+        `time.sleep` unvalidated, and must never raise.
+        """
+        # -1 is here and not for symmetry: the boundary mutant `< 0` -> `< -1` lets it
+        # through to `time.sleep(-1)`, which raises ValueError, escapes the retry loop and
+        # kills the run. Without this value that mutant survives the whole suite.
+        for hint in ("Wed, 21 Oct 2026 07:28:00 GMT", "soon", "", "-1", "-5", "1e9", "nan"):
+            with self.subTest(hint=hint):
+                mock_sleep.reset_mock()
+                mock_urlopen.side_effect = [
+                    _http_error(429, headers={"Retry-After": hint}),
+                    _mock_response(_OK_BODY),
+                ]
+                self.client.call("test/model", self.messages, max_tokens=10)
+                (waited,), _ = mock_sleep.call_args
+                self.assertGreaterEqual(waited, 0)
+                self.assertLessEqual(waited, RETRY_AFTER_CAP_SECONDS)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_zero_hint_means_now_not_the_fallback(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """`Retry-After: 0` is a usable hint meaning 'immediately', not a missing one.
+
+        Guards the boundary of the sign check: `< 0` and `<= 0` differ only here, and the
+        second would sit out twenty seconds a provider explicitly said were unnecessary.
+        """
+        mock_urlopen.side_effect = [
+            _http_error(429, headers={"Retry-After": "0"}),
+            _mock_response(_OK_BODY),
+        ]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        mock_sleep.assert_called_once_with(0)
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_the_long_wait_does_not_leak_into_the_next_attempt(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        """A 429 then a 502: the second wait is the short one, not the rate-limit one.
+
+        The override is per-attempt state. Hoisting it out of the loop leaves one seat's
+        rate limit slowing down every later hiccup in the same call — invisible, because
+        every assertion about a single-code sequence would still pass.
+        """
+        mock_urlopen.side_effect = [_http_error(429), _http_error(502), _mock_response(_OK_BODY)]
+        self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(
+            [call.args[0] for call in mock_sleep.call_args_list],
+            [RATE_LIMIT_FALLBACK_SECONDS, RETRY_BACKOFF_SECONDS[1]],
+        )
+
+    @patch("council.client.time.sleep")
+    @patch("council.client.urllib.request.urlopen")
+    def test_a_persistent_429_still_names_the_code(
+        self, mock_urlopen: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        mock_urlopen.side_effect = _http_error(429, headers={"Retry-After": "5"})
+        with self.assertRaises(OpenRouterError) as ctx:
+            self.client.call("test/model", self.messages, max_tokens=10)
+        self.assertEqual(mock_urlopen.call_count, MAX_RETRIES)
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(mock_sleep.call_count, MAX_RETRIES - 1)
+
+
+class TestBackoffBudgetIsCoherent(unittest.TestCase):
+    """The constants have to hold a relationship, and every other test pins only the symbol.
+
+    `RATE_LIMIT_FALLBACK_SECONDS = 0` passed the entire suite: each assertion compared the
+    behaviour against the constant, so the constant could be anything and stay green. These
+    assertions are about the numbers themselves — the mutation gate reaches `config.py` too.
+    """
+
+    def test_the_fallback_is_longer_than_the_whole_short_backoff(self) -> None:
+        """Otherwise it does not solve the problem it exists for: three seconds, twice."""
+        self.assertGreater(RATE_LIMIT_FALLBACK_SECONDS, sum(RETRY_BACKOFF_SECONDS))
+
+    def test_the_cap_is_not_below_the_fallback(self) -> None:
+        """A ceiling under the guess would mean trusting a provider's number less than ours."""
+        self.assertGreaterEqual(RETRY_AFTER_CAP_SECONDS, RATE_LIMIT_FALLBACK_SECONDS)
+
+    def test_the_worst_case_wait_stays_inside_the_e2e_budget(self) -> None:
+        """Seven sequential calls, every one rate-limited at the ceiling, under ten minutes.
+
+        `e2e.yml` carries `timeout-minutes: 15`. If raising these constants ever pushed the
+        worst case past it, the weekly sentinel would start dying of its own patience and
+        report a timeout instead of the seat that is actually failing.
+        """
+        sleeps_per_call = MAX_RETRIES - 1
+        worst_case_s = sleeps_per_call * RETRY_AFTER_CAP_SECONDS * len(VOTER_MODELS) * 2
+        self.assertLess(worst_case_s, 10 * 60)
 
 
 class TestErrorInsideBodyRetry(unittest.TestCase):
