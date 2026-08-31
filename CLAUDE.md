@@ -85,7 +85,7 @@ python -m coverage run -m unittest discover tests/ && python -m coverage report
 python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 ruff check council/ tests/ scripts/ && ruff format --check council/ tests/ scripts/
 zizmor .github/workflows/
-mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # CI ONLY: libcst ships no wheel for Apple x86_64, mutmut does not run on this workstation
+mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # gira in locale SOLO su 3.12: vedi sotto
 python scripts/pin_dev_deps.py                             # never hand-edit the -dev/-mutation lockfiles
 ```
 
@@ -142,6 +142,16 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   we need a BYOK key" stood for three weeks and was false: a *smaller* Mistral answered fine.
   One measurement closed it.
 
+## The mutation gate runs locally — the interpreter is the whole story
+
+This file said *"CI ONLY: libcst ships no wheel for Apple x86_64"*. **Measured 2026-08-31: it
+runs.** Python 3.12.7, x86_64, 693 mutants, 87.9% against the floor. On **3.10.14** — what
+bare `python` resolves to outside this directory — mutmut is not installed and dies with
+`No module named mutmut`. Same machine. A missing package under one interpreter was written
+down as a property of the hardware, and that made a five-minute local gate look impossible.
+Check `python -V` before believing the wheel story:
+`$(pyenv root)/versions/3.12.7/bin/python -m mutmut run`.
+
 ## Observability — the half that does not live in this repo
 
 - **Nothing here sends a trace to Langfuse.** `observability.py` writes JSON to stderr and
@@ -166,8 +176,7 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   notices if the weekly E2E fails to start. Deliberate as of 2026-08-31 — a replacement is
   under evaluation. Until then this is the known blind spot, and it is why the E2E was red
   for a week without anyone seeing it.
-- Secrets live in **Doppler** (`llm-council`, config `prd`) and in GitHub Actions secrets.
-  Read them with `doppler run --`; never print a value.
+- Secrets: **Doppler** (`llm-council`, config `prd`) and GitHub Actions. `doppler run --`, never a printed value.
 
 ## Security
 

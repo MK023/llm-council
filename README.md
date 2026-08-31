@@ -98,10 +98,10 @@ Two corrections to what this section used to say, both wrong for months:
   uses **Langfuse Cloud, EU region**. Nothing here is self-hosted.
 
 The cost of routing ingestion through an account setting is that **the repo cannot prove
-it works** — no test can reach a checkbox in someone's dashboard. On 2026-08-31 it was
-verified by hand for the first time and it does work: 44 council runs recorded since
-2026-08-13, grouped by session, with per-call cost. That it took until then to look is the
-point, and closing the gap with a real check is the next piece of work.
+it works** — no test can reach a checkbox in someone's dashboard. It was verified by hand
+for the first time on 2026-08-31, and it does work: runs going back weeks, grouped by
+session, with per-call cost. That it took until then to look is the point. No number here,
+deliberately — a count in a README is a fact with a shelf life and no gate behind it.
 
 ## Run tests
 
@@ -142,13 +142,21 @@ repository inactivity, silently. The job posts a check-in to a Sentry cron monit
 (`llm-council-e2e`), the kind of alarm that fires on the **absence** of a signal. The
 check-in never fails the build: a guard that kills what it guards is worse than no guard.
 
-**Honest limit, verified 2026-08-13:** that monitor exists with the right schedule and
-receives its check-ins, but it is **not alerting**. Sentry includes exactly one cron monitor
-per plan and the seat is taken by another project; monitors past the quota are registered and
-left inactive until reserved quota or a pay-as-you-go budget activates them. So the missed-run
-case — the one this is for — is currently *instrumented but not alarmed*. Written down rather
-than quietly implied, because a monitor everyone believes in and that never fires is worse than
-no monitor at all.
+**Honest limit, re-measured 2026-08-31 — and it is worse than this file used to say.** The
+monitor exists with the right schedule and is **`disabled`**. It has never recorded a single
+check-in. Sentry includes one cron monitor per plan and the seat is held by another project;
+monitors past the quota are registered and left inactive.
+
+The correction matters because the previous wording — *"receives its check-ins, but it is not
+alerting"* — described something that does not happen. Queried directly: `status: disabled`,
+*"No check-ins found"*, and `ok=0 error=0 missed=0` for the hour of 2026-08-31 in which the
+E2E ran and its own log printed `check-in Sentry: error`. **The check-in is sent and thrown
+away.** Not instrumented-but-silent: not instrumented.
+
+So the missed-run case — the one this is for — is **unguarded**, and was while the E2E sat red
+for a week after 2026-08-24 with nobody noticing. Written down instead of quietly implied,
+because a monitor everyone believes in and that never fires is worse than no monitor at all —
+and a README that says it is working is exactly how everyone comes to believe in it.
 
 ## Pipeline level
 

@@ -83,6 +83,14 @@ jobs:
 
       # Check-in del cron monitor Sentry (slug: llm-council-e2e).
       #
+      # ATTENZIONE, misurato il 2026-08-31: quel monitor e' `disabled` e non ha MAI
+      # registrato un check-in. Piano gratuito, un monitor attivo per account, posto
+      # occupato da un altro progetto. Questo step spedisce e Sentry butta: nella fascia
+      # oraria in cui la E2E ha girato oggi, `ok=0 error=0 missed=0`. Tutto il ragionamento
+      # qui sotto descrive quindi un guardiano CHE NON GIRA — resta perche' e' giusto e
+      # perche' il giorno che il posto si libera funziona da solo, ma finche' questa riga
+      # e' qui il caso "non e' partita affatto" NON e' sorvegliato da nessuno.
+      #
       # Il job rosso su Actions segnala che la sentinella e' FALLITA. Nessuno pero'
       # si accorge se non parte affatto — e GitHub disabilita gli schedule dopo 60
       # giorni di inattivita' sul repo, in silenzio. Un cron monitor si allarma

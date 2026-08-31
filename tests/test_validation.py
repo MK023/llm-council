@@ -100,9 +100,14 @@ class TestLoadEnv(unittest.TestCase):
         try:
             os.environ.pop("OPENROUTER_API_KEY", None)
             load_env(temp_path)
-            # La riga vera passa, quella commentata no — e la chiave e' la STESSA, quindi
-            # il test distingue davvero il commento dal valore invece di appoggiarsi a una
-            # seconda chiave che nel frattempo e' uscita dall'allowlist.
+            # La chiave e' la STESSA su entrambe le righe, che e' l'unica cosa cambiata qui:
+            # prima il test si appoggiava a LANGFUSE_HOST, uscita dall'allowlist.
+            # NON afferma di isolare la logica dei commenti: cancellando quella guardia il
+            # test resta verde, perche' e' l'allowlist a scartare `#OPENROUTER_API_KEY`.
+            # Verifica il comportamento osservabile — i commenti non entrano nell'ambiente —
+            # e la cecita' e' gia' documentata in `__main__.py`. Difesa in profondita', non
+            # isolabile: e non si scrive nel commento di un test una proprieta' che il test
+            # non ha, che e' precisamente il difetto che questa PR sta togliendo altrove.
             self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-vero")
             self.assertIsNone(os.environ.get("#OPENROUTER_API_KEY"))
         finally:

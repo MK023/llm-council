@@ -57,6 +57,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   tracing. They enabled one boolean in a local log line. It also described the destination
   as "self-hosted via `langfuse-devops-lab`" — that project uses **Langfuse Cloud, EU
   region**, and nothing here is self-hosted.
+- **The README said the Sentry cron monitor "receives its check-ins, but it is not alerting".**
+  It does not receive them. Queried directly on 2026-08-31: `status: disabled`, *"No check-ins
+  found"*, and `ok=0 error=0 missed=0` for the very hour in which the E2E ran and its own log
+  printed `check-in Sentry: error`. **The check-in is sent and thrown away.** Not
+  instrumented-but-silent — not instrumented. The missed-run case is unguarded, and was while
+  the E2E sat red for a week after 2026-08-24. Found by the review, which noticed that this
+  commit was removing a false indicator from the logs while leaving the identical false
+  indicator in the most-read file in the repo.
+- **`SECURITY.md` still said "only four allowlisted keys are imported"** under LLM06, citing a
+  test class this very commit modifies — so the document had been opened and the number had
+  not. `test_security_doc.py` checks that a cited test exists, never that a number in prose is
+  still true. The claim now names the key instead of counting.
+- **`CLAUDE.md` claimed mutmut cannot run on this workstation** (*"libcst ships no wheel for
+  Apple x86_64"*). It runs: 693 mutants, **87.9%** against the floor of 85, Python 3.12.7,
+  x86_64. What is true is narrower — under 3.10.14, which is what bare `python` resolves to
+  outside the project directory, mutmut is simply not installed. A missing package under one
+  interpreter had been recorded as a property of the hardware, and that made the one gate this
+  project most depends on look impossible to run locally.
 - `CLAUDE.md` said nothing about observability at all, so the trap that matters most was
   undocumented: **the ingestion half does not live in this repo**, and no test can reach a
   checkbox in someone's dashboard. It now also records that the Sentry cron monitor
