@@ -75,16 +75,33 @@ python -m council "Should I accept the offer from Company X?"
 
 The full council flow runs (~90s end to end, ~$0.005). Output goes to stdout, structured JSON observability logs go to stderr.
 
-## Optional: Langfuse observability
+## Langfuse observability — there is nothing to configure here
 
-If you have a Langfuse account (self-hosted via `langfuse-devops-lab` or cloud), set:
+**No environment variable in this project turns tracing on or off**, and the three that
+looked like they did were removed on 2026-08-31.
 
-```
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-```
+Traces reach Langfuse through **OpenRouter Broadcast** (OpenRouter → Settings →
+Observability): no code, no dependency, no key. The client sends the `user`, `session_id`
+and `trace` fields Broadcast reads, and OpenRouter forwards them. The stderr JSON is a
+separate thing — local inspection, and the only telemetry this code produces itself.
 
-The stderr JSON is for local inspection. Traces reach Langfuse through **OpenRouter Broadcast** (Settings > Observability): no code, no dependency. The client sends the `user` / `session_id` / `trace` fields Broadcast reads.
+**What this means for anyone cloning the repo:** the council runs and traces nothing,
+unless you switch Broadcast on in your own OpenRouter account. That is the whole
+integration.
+
+Two corrections to what this section used to say, both wrong for months:
+
+- It told you to set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Setting them
+  flipped one boolean in a local log line and changed nothing else. `LANGFUSE_HOST` was
+  read by no line of code at all.
+- It described the destination as "self-hosted via `langfuse-devops-lab`". That project
+  uses **Langfuse Cloud, EU region**. Nothing here is self-hosted.
+
+The cost of routing ingestion through an account setting is that **the repo cannot prove
+it works** — no test can reach a checkbox in someone's dashboard. On 2026-08-31 it was
+verified by hand for the first time and it does work: 44 council runs recorded since
+2026-08-13, grouped by session, with per-call cost. That it took until then to look is the
+point, and closing the gap with a real check is the next piece of work.
 
 ## Run tests
 

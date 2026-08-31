@@ -107,13 +107,24 @@ class TestEmittedRecord(unittest.TestCase):
 
     def test_the_record_carries_exactly_the_declared_fields(self) -> None:
         record = self._emit()
-        self.assertEqual(
-            set(record), {"ts", "trace_id", "question_hash", "event", "langfuse_opt_in"}
-        )
+        self.assertEqual(set(record), {"ts", "trace_id", "question_hash", "event"})
         self.assertEqual(record["trace_id"], "trace-abc")
         self.assertEqual(record["question_hash"], "deadbeef")
         self.assertEqual(record["event"], "query_start")
-        self.assertEqual(record["langfuse_opt_in"], obs._LANGFUSE_ENABLED)
+
+    def test_no_field_claims_langfuse_is_on(self) -> None:
+        """`langfuse_opt_in` was a lamp wired to nothing, and it read as proof.
+
+        It went true when two environment variables existed and false otherwise. Neither
+        state said anything about whether a trace reached Langfuse: ingestion runs through
+        OpenRouter Broadcast, an account setting outside this repo, and those keys are not
+        part of it. A reader who saw `true` concluded telemetry was flowing. On 2026-08-31
+        it was flowing — and had been unverified for months, which the lamp had made look
+        like a checked fact.
+        """
+        record = self._emit()
+        self.assertNotIn("langfuse_opt_in", record)
+        self.assertFalse([key for key in record if "langfuse" in key.lower()])
 
     def test_the_event_name_is_the_one_passed_in(self) -> None:
         self.assertEqual(self._emit("stage_2_done")["event"], "stage_2_done")

@@ -33,6 +33,37 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   destined to drift from the first; a wall clock bounds every way of hanging, including the
   ones not yet imagined.
 
+### Removed — a lamp wired to nothing
+
+- **`langfuse_opt_in` is gone from every telemetry record.** It went `true` when
+  `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` existed in the environment and `false`
+  otherwise. Neither state said anything about whether a trace reached Langfuse: ingestion
+  runs through **OpenRouter Broadcast**, an account setting outside this repo, and those
+  keys are no part of it. A reader who saw `true` concluded telemetry was flowing. On
+  2026-08-31 it *was* flowing — 44 runs recorded since 2026-08-13, correctly grouped by
+  session — and **nobody had ever checked**. The field had made an unverified fact look
+  verified, which is worse than showing nothing.
+- **The `--env` allow-list is down to `OPENROUTER_API_KEY`.** The three `LANGFUSE_*` names
+  were admitted for an integration this codebase never contained, and `LANGFUSE_HOST` was
+  read by no line at all. An allow-list is a statement about what the program uses; three
+  unused names made it describe a program nobody had written. The security property is
+  unchanged and narrower.
+- **`observability.py` no longer claims an "opt-in Langfuse backend".** It writes JSON to
+  stderr. That is the whole module.
+
+### Fixed — documentation that had been wrong for months
+
+- The README told you to set two Langfuse keys under a heading that implied they enabled
+  tracing. They enabled one boolean in a local log line. It also described the destination
+  as "self-hosted via `langfuse-devops-lab`" — that project uses **Langfuse Cloud, EU
+  region**, and nothing here is self-hosted.
+- `CLAUDE.md` said nothing about observability at all, so the trap that matters most was
+  undocumented: **the ingestion half does not live in this repo**, and no test can reach a
+  checkbox in someone's dashboard. It now also records that the Sentry cron monitor
+  `llm-council-e2e` is **disabled and has never checked in** — free plan, one monitor per
+  account, seat taken — so the long comment in `e2e.yml` describes a guard that is not
+  running. That is why the E2E stayed red for a week with nobody noticing.
+
 ### Fixed
 
 - **A retryable code delivered in the body was never retried.** On 2026-08-31 the weekly

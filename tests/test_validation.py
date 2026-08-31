@@ -77,14 +77,11 @@ class TestLoadEnv(unittest.TestCase):
         """A value containing '=' (e.g. base64) must be preserved entirely."""
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
             f.write("OPENROUTER_API_KEY=abc=def=ghi\n")
-            f.write("LANGFUSE_HOST=plain\n")
             temp_path = Path(f.name)
         try:
             os.environ.pop("OPENROUTER_API_KEY", None)
-            os.environ.pop("LANGFUSE_HOST", None)
             load_env(temp_path)
             self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "abc=def=ghi")
-            self.assertEqual(os.environ.get("LANGFUSE_HOST"), "plain")
         finally:
             temp_path.unlink()
 
@@ -98,14 +95,16 @@ class TestLoadEnv(unittest.TestCase):
             # la singola riga di codice — che e' difesa in profondita', non isolabile.
             f.write("#OPENROUTER_API_KEY=valore-commentato\n")
             f.write("\n")
-            f.write("LANGFUSE_HOST=yes\n")
+            f.write("OPENROUTER_API_KEY=valore-vero\n")
             temp_path = Path(f.name)
         try:
-            os.environ.pop("LANGFUSE_HOST", None)
+            os.environ.pop("OPENROUTER_API_KEY", None)
             load_env(temp_path)
-            self.assertEqual(os.environ.get("LANGFUSE_HOST"), "yes")
+            # La riga vera passa, quella commentata no — e la chiave e' la STESSA, quindi
+            # il test distingue davvero il commento dal valore invece di appoggiarsi a una
+            # seconda chiave che nel frattempo e' uscita dall'allowlist.
+            self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-vero")
             self.assertIsNone(os.environ.get("#OPENROUTER_API_KEY"))
-            self.assertNotEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-commentato")
         finally:
             temp_path.unlink()
 

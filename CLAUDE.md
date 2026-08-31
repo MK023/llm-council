@@ -142,6 +142,33 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   we need a BYOK key" stood for three weeks and was false: a *smaller* Mistral answered fine.
   One measurement closed it.
 
+## Observability — the half that does not live in this repo
+
+- **Nothing here sends a trace to Langfuse.** `observability.py` writes JSON to stderr and
+  stops. Ingestion is **OpenRouter Broadcast**, a checkbox in the OpenRouter account, and
+  the only thing the code contributes is the `user` / `session_id` / `trace` fields in the
+  request body. **No environment variable in this project turns it on.** Three that looked
+  like they did — plus a `langfuse_opt_in` field that went true when they existed — were
+  removed on 2026-08-31: a lamp wired to nothing reads as proof, and made an unverified
+  fact look checked.
+- **Group by `sessionId`, never `traceId`.** Measured 2026-08-31: when a stage fails,
+  OpenRouter gives the failed call its **own** trace id, so one run lands as two traces.
+  `sessionId` was identical across both. A check written from the docs would count 6 of 7
+  and cry data loss.
+- **A failed attempt still produces a generation in Langfuse**, while the council's own
+  telemetry records no `generation_id` for it. Compare with `>=`, never `==`.
+- **Costs are there; unit prices are not.** `totalCost` is populated (OpenRouter sends the
+  real figure); `totalPrice` is null because Langfuse has no price sheet for these models.
+  Reading the wrong one says "Langfuse does not track cost", which is false.
+- **The Sentry cron monitor `llm-council-e2e` is `disabled` and has never checked in.**
+  Free plan, one active monitor per account, and the seat is held by `supabase-keepalive`.
+  So the long comment in `e2e.yml` describes a guard that is **not running**: nothing
+  notices if the weekly E2E fails to start. Deliberate as of 2026-08-31 — a replacement is
+  under evaluation. Until then this is the known blind spot, and it is why the E2E was red
+  for a week without anyone seeing it.
+- Secrets live in **Doppler** (`llm-council`, config `prd`) and in GitHub Actions secrets.
+  Read them with `doppler run --`; never print a value.
+
 ## Security
 
 - **ZDR per request, fail-closed** — the provider block in `config.py`, sent on every payload:

@@ -31,9 +31,13 @@ from council.stages import (
 # the case that matters here — this tool is wrapped as a Claude Code skill, so the
 # arguments are assembled by a model. Validating the path is necessary; bounding
 # what the file may set is what actually contains the damage.
-_ALLOWED_ENV_KEYS: Final[frozenset[str]] = frozenset(
-    {"OPENROUTER_API_KEY", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"}
-)
+#
+# One key, because one key is what the program reads. The three `LANGFUSE_*` names that
+# used to sit here were admitted for an integration this codebase never contained:
+# ingestion runs through OpenRouter Broadcast, an account setting, and `LANGFUSE_HOST` was
+# read by no line at all. An allow-list is a statement about what the program uses, and
+# three unused names made it describe a program nobody had written. Removed 2026-08-31.
+_ALLOWED_ENV_KEYS: Final[frozenset[str]] = frozenset({"OPENROUTER_API_KEY"})
 
 # A .env is a small text file. Anything larger is not one, and reading it is a way
 # to hang the process on /dev/zero or a multi-gigabyte log.

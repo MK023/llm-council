@@ -1,9 +1,15 @@
-"""Structured logging + optional Langfuse opt-in instrumentation.
+"""Structured logging to stderr. One backend, and it is stdlib `logging`.
 
-Default backend: stdlib `logging` with JSON formatter to stderr.
-Opt-in backend: if `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` are set in env,
-emit trace + span events as structured log records that a Langfuse forwarder
-(or the OpenRouter Langfuse plugin) can consume.
+This module does NOT talk to Langfuse and never did. Traces reach Langfuse through
+OpenRouter Broadcast — an account setting, outside this repo — from the `user`,
+`session_id` and `trace` fields `client.py` puts in the request body.
+
+Until 2026-08-31 this docstring promised an "opt-in Langfuse backend" and every record
+carried `langfuse_opt_in`, a boolean that went true when two environment variables
+existed. It made no call, changed no behaviour, and said nothing about whether a trace
+had arrived anywhere — but a reader who saw `true` concluded telemetry was flowing. It
+was flowing, and nobody had ever checked: the lamp made an unverified fact look verified,
+which is worse than no lamp.
 """
 
 from __future__ import annotations
@@ -31,9 +37,6 @@ def _build_logger() -> logging.Logger:
 
 
 _LOGGER = _build_logger()
-_LANGFUSE_ENABLED = bool(
-    os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
-)
 
 
 @dataclass
@@ -54,7 +57,6 @@ def emit(event: str, trace: TraceContext, **fields: Any) -> None:
         # promise was in the docstring, the mechanism was missing.
         "question_hash": trace.question_hash,
         "event": event,
-        "langfuse_opt_in": _LANGFUSE_ENABLED,
         **fields,
     }
     _LOGGER.info(json.dumps(record, ensure_ascii=False))
