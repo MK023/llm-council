@@ -96,6 +96,9 @@ jobs:
       # e non puo' cambiare il verdetto dello step sopra.
       - name: Le tracce sono arrivate a Langfuse?
         if: always()
+        # Tetto proprio, oltre a quello del job: questo step dorme aspettando l'ingestione
+        # e pagina. Se restasse appeso, il rosso finirebbe sul council invece che qui.
+        timeout-minutes: 5
         env:
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}

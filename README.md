@@ -107,8 +107,8 @@ arrived, and prints the spend of the last 30 days beside it.
 **It warns and never fails.** A guard that kills what it guards is worse than no guard, so
 the council's own verdict always belongs to the step before. And it does not alarm on the
 run it just watched — Langfuse documents up to fifteen minutes of ingestion delay for
-third-party exporters, and OpenRouter Broadcast is one, so shouting "data loss" ninety
-seconds later would be shouting at a documented delay. The alarm sits on a question the
+third-party exporters, and OpenRouter Broadcast is one, so shouting "data loss" a minute
+later would be shouting at a documented delay. The alarm sits on a question the
 delay cannot touch: **has a single complete council run reached Langfuse in the last eight
 days?** Eight, not seven, because GitHub's scheduler slipped by nearly seven hours on
 2026-08-31 and a window equal to the schedule would fire on the wrong system.

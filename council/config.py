@@ -55,6 +55,13 @@ PROVIDER_ROUTING: Final[dict[str, object]] = {
 # Divergence comes from the WEIGHTS, not from the datacentre: a model trained by
 # Alibaba and served from Vertex is still an Alibaba voice. Houses are what must
 # differ; the serving provider is a privacy concern, handled by PROVIDER_ROUTING.
+# Sent as the top-level `user` field of every OpenRouter request and read from there by
+# Langfuse. It lives here, and not beside its only writer in `stages.py`, because
+# `scripts/langfuse_check.py` FILTERS Langfuse by this exact value: two hand-kept copies
+# drifting apart would not silence that check — it would make it warn every week forever
+# about an ingestion that is working perfectly.
+USER_ID: Final[str] = "marco-bellingeri"
+
 VOTER_MODELS: Final[tuple[str, ...]] = (
     "mistralai/mistral-small-3.2-24b-instruct",
     "meta-llama/llama-3.3-70b-instruct",

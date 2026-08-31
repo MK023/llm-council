@@ -20,3 +20,4 @@ graphify-out/
 
 # Albero di lavoro di mutmut: sorgente mutata + cache, rigenerato a ogni run
 mutants/
+council.stderr

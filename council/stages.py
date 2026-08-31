@@ -12,6 +12,7 @@ from council.config import (
     MAX_TOKENS_STAGE_2,
     MAX_TOKENS_STAGE_3,
     RANK_REGEX,
+    USER_ID,
     VOTER_MODELS,
     stage2_prompt,
     stage3_prompt,
@@ -22,7 +23,11 @@ _RANK_PATTERN = re.compile(RANK_REGEX, re.IGNORECASE | re.DOTALL)
 # User identifier, sent as the top-level `user` field of the OpenRouter body and read
 # from there by Langfuse. Single-user CLI tool, so the identifier is static.
 # (It used to say `metadata.langfuse_user_id` — that was the bug, not the design.)
-_USER_ID = "marco-bellingeri"
+#
+# It lives in `config.py` because `scripts/langfuse_check.py` filters Langfuse BY this value:
+# two hand-kept copies drifting apart would not silence that check, it would make it warn
+# every week forever about an ingestion that is working fine.
+_USER_ID = USER_ID
 
 
 # OpenRouter Broadcast caps `session_id` at 128 characters (Langfuse drops over 200).

@@ -21,9 +21,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import langfuse_check as lc  # noqa: E402
 from scripts.langfuse_check import (  # noqa: E402
     CALLS_PER_RUN,
     FRESHNESS_WINDOW_DAYS,
+    MAX_PAGES,
     complete_runs_since,
     count_arrived,
     main,
@@ -139,6 +141,66 @@ class TestArrivalIsCountedBySession(unittest.TestCase):
         self.assertNotIn("traceId", params)
 
 
+class TestTheRequestItself(unittest.TestCase):
+    """`_api_get` was reached by no test at all: v1 for v2, Bearer for Basic, no timeout —
+    every one of those mutants stayed green, because every other test mocks this function.
+    """
+
+    def _capture(self, base_url: str = "https://cloud.example") -> tuple[str, dict[str, str]]:
+        captured: dict[str, object] = {}
+
+        class _Resp:
+            def __enter__(self_inner):  # noqa: N805
+                return self_inner
+
+            def __exit__(self_inner, *_: object) -> bool:  # noqa: N805
+                return False
+
+            def read(self_inner) -> bytes:  # noqa: N805
+                return b'{"data": [], "meta": {}}'
+
+        def fake_urlopen(req: object, timeout: object = None) -> object:
+            captured["url"] = req.full_url  # type: ignore[attr-defined]
+            captured["headers"] = dict(req.headers)  # type: ignore[attr-defined]
+            captured["timeout"] = timeout
+            return _Resp()
+
+        with patch("scripts.langfuse_check.urllib.request.urlopen", fake_urlopen):
+            lc._api_get(base_url, "dXNlcjpwYXNz", {"limit": "1"})
+        return str(captured["url"]), captured  # type: ignore[return-value]
+
+    def test_it_calls_the_v2_endpoint_with_basic_auth_and_a_timeout(self) -> None:
+        url, captured = self._capture()
+        self.assertIn("/api/public/v2/observations?", url)
+        self.assertNotIn("/v1/", url)
+        self.assertEqual(captured["headers"].get("Authorization"), "Basic dXNlcjpwYXNz")  # type: ignore[union-attr]
+        self.assertEqual(captured["timeout"], lc.TIMEOUT_S)
+
+    def test_a_non_https_base_url_is_refused(self) -> None:
+        """The base URL comes from a secret and reaches `urlopen`, which speaks `file://`
+        (reading local disk instead of the network) and `http://` (Basic auth in the clear).
+        """
+        for base in ("file:///etc", "http://insecure.example", "ftp://x", "HTTPS_evil"):
+            with self.subTest(base=base), self.assertRaises(ValueError):
+                lc._api_get(base, "auth", {})
+
+    def test_https_is_accepted_case_insensitively(self) -> None:
+        url, _ = self._capture("HTTPS://Cloud.Example/")
+        self.assertTrue(url.lower().startswith("https://"))
+
+
+class TestTheUserIdIsNotACopy(unittest.TestCase):
+    def test_it_is_the_same_object_the_council_sends(self) -> None:
+        """Two hand-kept copies drifting would not silence this check — it would make it
+        warn every week forever about an ingestion that is working perfectly.
+        """
+        from council.config import USER_ID
+        from council.stages import _USER_ID
+
+        self.assertEqual(lc.COUNCIL_USER_ID, USER_ID)
+        self.assertEqual(_USER_ID, USER_ID)
+
+
 class TestFreshnessIsWhatAlarms(unittest.TestCase):
     """The alarm lives on a window measured in days, because the delay is measured in minutes."""
 
@@ -171,6 +233,42 @@ class TestFreshnessIsWhatAlarms(unittest.TestCase):
         with patch("scripts.langfuse_check._api_get", side_effect=pages):
             complete, sessions, _ = complete_runs_since("https://x", "auth", 8)
         self.assertEqual((complete, sessions), (1, 1))
+
+    def test_a_stuck_cursor_cannot_hang_the_job(self) -> None:
+        """An API that keeps returning the same cursor looped forever, and the job died on
+        `timeout-minutes` — a red build blamed on the council for a fault in the monitor.
+        """
+        stuck = {"data": [], "meta": {"cursor": "always-the-same"}}
+        for call in (
+            lambda: complete_runs_since("https://x", "auth", 8),
+            lambda: recent_spend("https://x", "auth", 30),
+        ):
+            with self.subTest(call=call):
+                with patch("scripts.langfuse_check._api_get", return_value=stuck) as api:
+                    call()
+                self.assertEqual(api.call_count, MAX_PAGES)
+
+    def test_the_page_cap_is_a_number_and_not_just_a_symbol(self) -> None:
+        """The test above asserts `call_count == MAX_PAGES`, which passes at any value.
+
+        Set `MAX_PAGES = 100000` and it stays green while the loop is unbounded again — the
+        assertion follows the constant instead of constraining it. Measured: a 30-day window
+        holds ~270 observations, so three pages of 100. Fifty is sixteen times the need and
+        still a bound; a hundred thousand is not a bound, it is the `while True` renamed.
+        """
+        self.assertGreaterEqual(MAX_PAGES, 10)
+        self.assertLessEqual(MAX_PAGES, 100)
+
+    def test_a_price_that_arrives_as_a_string_is_still_money(self) -> None:
+        """Langfuse's own doc sample shows price fields as strings (`"0.000005"`), and
+        `sum()` over a string raises TypeError — which used to escape `main` entirely.
+        """
+        page = {"data": [{"totalCost": "0.01"}, {"totalCost": 0.02}], "meta": {}}
+        with patch("scripts.langfuse_check._api_get", return_value=page):
+            _, cost = count_arrived("https://x", "auth", "s")
+            spend, _ = recent_spend("https://x", "auth", 30)
+        self.assertAlmostEqual(cost, 0.03)
+        self.assertAlmostEqual(spend, 0.03)
 
     def test_spend_sums_across_pages(self) -> None:
         pages = [
@@ -248,6 +346,51 @@ class TestMainNeverKillsWhatItWatches(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("arrivate", out)
         self.assertNotIn("::warning::", out)
+
+    def test_no_shape_of_malformed_response_can_fail_the_job(self) -> None:
+        """The contract is "never fail", and the first draft wrote it as a list of types.
+
+        `{"data": null}` and a string `totalCost` both escaped that list as `TypeError`,
+        exited non-zero, turned the E2E red and sent `status=error` to Sentry — a false
+        alarm about the council raised by the thing watching the council.
+        """
+        shapes: list[object] = [
+            {"meta": {}},
+            {"data": None, "meta": {}},
+            {"data": [], "meta": []},
+            {"data": [{"totalCost": "not-a-number"}], "meta": {}},
+            {"data": "a string"},
+            [],
+            None,
+        ]
+        for shape in shapes:
+            with self.subTest(shape=shape), TemporaryDirectory() as d:
+                path = _stderr_file(d, _record(event="a", generation_id="g"))
+                with (
+                    patch("scripts.langfuse_check.time.sleep"),
+                    patch("scripts.langfuse_check._api_get", return_value=shape),
+                ):
+                    code, _ = self._run([path])
+                self.assertEqual(code, 0)
+
+    def test_an_exception_never_leaks_the_url_or_the_credentials(self) -> None:
+        """Only the exception's TYPE is printed. Its message could carry the request URL,
+        and the URL is built from a secret.
+        """
+        with TemporaryDirectory() as d:
+            path = _stderr_file(d, _record(event="a", generation_id="g"))
+            with (
+                patch("scripts.langfuse_check.time.sleep"),
+                patch(
+                    "scripts.langfuse_check._api_get",
+                    side_effect=RuntimeError("https://secret-host/x?key=pk-lf-CANARY"),
+                ),
+            ):
+                code, out = self._run([path])
+        self.assertEqual(code, 0)
+        self.assertNotIn("CANARY", out)
+        self.assertNotIn("secret-host", out)
+        self.assertIn("RuntimeError", out)
 
     def test_no_complete_run_in_the_window_is_the_one_thing_that_warns(self) -> None:
         empty = {"data": [], "meta": {}}
