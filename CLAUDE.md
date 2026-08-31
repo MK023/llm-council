@@ -85,7 +85,7 @@ python -m coverage run -m unittest discover tests/ && python -m coverage report
 python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 ruff check council/ tests/ scripts/ && ruff format --check council/ tests/ scripts/
 zizmor .github/workflows/
-mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # CI ONLY: libcst ships no wheel for Apple x86_64, mutmut does not run on this workstation
+mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # gira in locale SOLO su 3.12: vedi sotto
 python scripts/pin_dev_deps.py                             # never hand-edit the -dev/-mutation lockfiles
 ```
 
@@ -141,6 +141,42 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
 - **A recorded limit without a measurement expires in silence.** "Europe is out on rate limits,
   we need a BYOK key" stood for three weeks and was false: a *smaller* Mistral answered fine.
   One measurement closed it.
+
+## The mutation gate runs locally — the interpreter is the whole story
+
+This file said *"CI ONLY: libcst ships no wheel for Apple x86_64"*. **Measured 2026-08-31: it
+runs.** Python 3.12.7, x86_64, 693 mutants, 87.9% against the floor. On **3.10.14** — what
+bare `python` resolves to outside this directory — mutmut is not installed and dies with
+`No module named mutmut`. Same machine. A missing package under one interpreter was written
+down as a property of the hardware, and that made a five-minute local gate look impossible.
+Check `python -V` before believing the wheel story:
+`$(pyenv root)/versions/3.12.7/bin/python -m mutmut run`.
+
+## Observability — the half that does not live in this repo
+
+- **Nothing here sends a trace to Langfuse.** `observability.py` writes JSON to stderr and
+  stops. Ingestion is **OpenRouter Broadcast**, a checkbox in the OpenRouter account, and
+  the only thing the code contributes is the `user` / `session_id` / `trace` fields in the
+  request body. **No environment variable in this project turns it on.** Three that looked
+  like they did — plus a `langfuse_opt_in` field that went true when they existed — were
+  removed on 2026-08-31: a lamp wired to nothing reads as proof, and made an unverified
+  fact look checked.
+- **Group by `sessionId`, never `traceId`.** Measured 2026-08-31: when a stage fails,
+  OpenRouter gives the failed call its **own** trace id, so one run lands as two traces.
+  `sessionId` was identical across both. A check written from the docs would count 6 of 7
+  and cry data loss.
+- **A failed attempt still produces a generation in Langfuse**, while the council's own
+  telemetry records no `generation_id` for it. Compare with `>=`, never `==`.
+- **Costs are there; unit prices are not.** `totalCost` is populated (OpenRouter sends the
+  real figure); `totalPrice` is null because Langfuse has no price sheet for these models.
+  Reading the wrong one says "Langfuse does not track cost", which is false.
+- **The Sentry cron monitor `llm-council-e2e` is `disabled` and has never checked in.**
+  Free plan, one active monitor per account, and the seat is held by `supabase-keepalive`.
+  So the long comment in `e2e.yml` describes a guard that is **not running**: nothing
+  notices if the weekly E2E fails to start. Deliberate as of 2026-08-31 — a replacement is
+  under evaluation. Until then this is the known blind spot, and it is why the E2E was red
+  for a week without anyone seeing it.
+- Secrets: **Doppler** (`llm-council`, config `prd`) and GitHub Actions. `doppler run --`, never a printed value.
 
 ## Security
 

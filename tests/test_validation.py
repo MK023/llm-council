@@ -77,14 +77,11 @@ class TestLoadEnv(unittest.TestCase):
         """A value containing '=' (e.g. base64) must be preserved entirely."""
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
             f.write("OPENROUTER_API_KEY=abc=def=ghi\n")
-            f.write("LANGFUSE_HOST=plain\n")
             temp_path = Path(f.name)
         try:
             os.environ.pop("OPENROUTER_API_KEY", None)
-            os.environ.pop("LANGFUSE_HOST", None)
             load_env(temp_path)
             self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "abc=def=ghi")
-            self.assertEqual(os.environ.get("LANGFUSE_HOST"), "plain")
         finally:
             temp_path.unlink()
 
@@ -98,14 +95,21 @@ class TestLoadEnv(unittest.TestCase):
             # la singola riga di codice — che e' difesa in profondita', non isolabile.
             f.write("#OPENROUTER_API_KEY=valore-commentato\n")
             f.write("\n")
-            f.write("LANGFUSE_HOST=yes\n")
+            f.write("OPENROUTER_API_KEY=valore-vero\n")
             temp_path = Path(f.name)
         try:
-            os.environ.pop("LANGFUSE_HOST", None)
+            os.environ.pop("OPENROUTER_API_KEY", None)
             load_env(temp_path)
-            self.assertEqual(os.environ.get("LANGFUSE_HOST"), "yes")
+            # La chiave e' la STESSA su entrambe le righe, che e' l'unica cosa cambiata qui:
+            # prima il test si appoggiava a LANGFUSE_HOST, uscita dall'allowlist.
+            # NON afferma di isolare la logica dei commenti: cancellando quella guardia il
+            # test resta verde, perche' e' l'allowlist a scartare `#OPENROUTER_API_KEY`.
+            # Verifica il comportamento osservabile — i commenti non entrano nell'ambiente —
+            # e la cecita' e' gia' documentata in `__main__.py`. Difesa in profondita', non
+            # isolabile: e non si scrive nel commento di un test una proprieta' che il test
+            # non ha, che e' precisamente il difetto che questa PR sta togliendo altrove.
+            self.assertEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-vero")
             self.assertIsNone(os.environ.get("#OPENROUTER_API_KEY"))
-            self.assertNotEqual(os.environ.get("OPENROUTER_API_KEY"), "valore-commentato")
         finally:
             temp_path.unlink()
 

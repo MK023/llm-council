@@ -19,7 +19,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from council.__main__ import load_env, main, parse_args
+from council.__main__ import _ALLOWED_ENV_KEYS, load_env, main, parse_args
 from council.client import CallResult, OpenRouterError
 from council.config import MAX_QUESTION_LENGTH, MAX_TOTAL_TOKENS_PER_RUN, VOTER_MODELS
 from council.stages import RankingResult, StageResult
@@ -356,7 +356,14 @@ class TestEnvPathIsBounded(unittest.TestCase):
                 self.assertNotIn("LD_PRELOAD", os.environ)
                 self.assertNotEqual(os.environ.get("PATH"), "/evil")
 
-    def test_langfuse_keys_are_allowed(self) -> None:
+    def test_langfuse_keys_are_refused(self) -> None:
+        """Nothing in this process reads them, so the allow-list must not carry them.
+
+        They were admitted for a Langfuse integration that never existed in this codebase:
+        ingestion goes through OpenRouter Broadcast, an account setting. `LANGFUSE_HOST` was
+        read by no line at all. An allow-list is a statement about what the program uses —
+        three names it does not use made it describe a program that was never written.
+        """
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / ".env"
             p.write_text(
@@ -364,8 +371,12 @@ class TestEnvPathIsBounded(unittest.TestCase):
             )
             with patch.dict(os.environ, {}, clear=True):
                 load_env(p)
-                self.assertEqual(os.environ["LANGFUSE_PUBLIC_KEY"], "pk")
-                self.assertEqual(os.environ["LANGFUSE_HOST"], "https://x")
+                for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+                    self.assertNotIn(key, os.environ)
+
+    def test_the_allow_list_carries_only_what_the_program_reads(self) -> None:
+        """One key, and the assertion names it: a set that grows silently is not a limit."""
+        self.assertEqual(_ALLOWED_ENV_KEYS, frozenset({"OPENROUTER_API_KEY"}))
 
     def test_directory_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as d:

@@ -33,6 +33,55 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   destined to drift from the first; a wall clock bounds every way of hanging, including the
   ones not yet imagined.
 
+### Removed — a lamp wired to nothing
+
+- **`langfuse_opt_in` is gone from every telemetry record.** It went `true` when
+  `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` existed in the environment and `false`
+  otherwise. Neither state said anything about whether a trace reached Langfuse: ingestion
+  runs through **OpenRouter Broadcast**, an account setting outside this repo, and those
+  keys are no part of it. A reader who saw `true` concluded telemetry was flowing. On
+  2026-08-31 it *was* flowing — 44 runs recorded since 2026-08-13, correctly grouped by
+  session — and **nobody had ever checked**. The field had made an unverified fact look
+  verified, which is worse than showing nothing.
+- **The `--env` allow-list is down to `OPENROUTER_API_KEY`.** The three `LANGFUSE_*` names
+  were admitted for an integration this codebase never contained, and `LANGFUSE_HOST` was
+  read by no line at all. An allow-list is a statement about what the program uses; three
+  unused names made it describe a program nobody had written. The security property is
+  unchanged and narrower.
+- **`observability.py` no longer claims an "opt-in Langfuse backend".** It writes JSON to
+  stderr. That is the whole module.
+
+### Fixed — documentation that had been wrong for months
+
+- The README told you to set two Langfuse keys under a heading that implied they enabled
+  tracing. They enabled one boolean in a local log line. It also described the destination
+  as "self-hosted via `langfuse-devops-lab`" — that project uses **Langfuse Cloud, EU
+  region**, and nothing here is self-hosted.
+- **The README said the Sentry cron monitor "receives its check-ins, but it is not alerting".**
+  It does not receive them. Queried directly on 2026-08-31: `status: disabled`, *"No check-ins
+  found"*, and `ok=0 error=0 missed=0` for the very hour in which the E2E ran and its own log
+  printed `check-in Sentry: error`. **The check-in is sent and thrown away.** Not
+  instrumented-but-silent — not instrumented. The missed-run case is unguarded, and was while
+  the E2E sat red for a week after 2026-08-24. Found by the review, which noticed that this
+  commit was removing a false indicator from the logs while leaving the identical false
+  indicator in the most-read file in the repo.
+- **`SECURITY.md` still said "only four allowlisted keys are imported"** under LLM06, citing a
+  test class this very commit modifies — so the document had been opened and the number had
+  not. `test_security_doc.py` checks that a cited test exists, never that a number in prose is
+  still true. The claim now names the key instead of counting.
+- **`CLAUDE.md` claimed mutmut cannot run on this workstation** (*"libcst ships no wheel for
+  Apple x86_64"*). It runs: 693 mutants, **87.9%** against the floor of 85, Python 3.12.7,
+  x86_64. What is true is narrower — under 3.10.14, which is what bare `python` resolves to
+  outside the project directory, mutmut is simply not installed. A missing package under one
+  interpreter had been recorded as a property of the hardware, and that made the one gate this
+  project most depends on look impossible to run locally.
+- `CLAUDE.md` said nothing about observability at all, so the trap that matters most was
+  undocumented: **the ingestion half does not live in this repo**, and no test can reach a
+  checkbox in someone's dashboard. It now also records that the Sentry cron monitor
+  `llm-council-e2e` is **disabled and has never checked in** — free plan, one monitor per
+  account, seat taken — so the long comment in `e2e.yml` describes a guard that is not
+  running. That is why the E2E stayed red for a week with nobody noticing.
+
 ### Fixed
 
 - **A retryable code delivered in the body was never retried.** On 2026-08-31 the weekly

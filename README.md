@@ -75,16 +75,33 @@ python -m council "Should I accept the offer from Company X?"
 
 The full council flow runs (~90s end to end, ~$0.005). Output goes to stdout, structured JSON observability logs go to stderr.
 
-## Optional: Langfuse observability
+## Langfuse observability — there is nothing to configure here
 
-If you have a Langfuse account (self-hosted via `langfuse-devops-lab` or cloud), set:
+**No environment variable in this project turns tracing on or off**, and the three that
+looked like they did were removed on 2026-08-31.
 
-```
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-```
+Traces reach Langfuse through **OpenRouter Broadcast** (OpenRouter → Settings →
+Observability): no code, no dependency, no key. The client sends the `user`, `session_id`
+and `trace` fields Broadcast reads, and OpenRouter forwards them. The stderr JSON is a
+separate thing — local inspection, and the only telemetry this code produces itself.
 
-The stderr JSON is for local inspection. Traces reach Langfuse through **OpenRouter Broadcast** (Settings > Observability): no code, no dependency. The client sends the `user` / `session_id` / `trace` fields Broadcast reads.
+**What this means for anyone cloning the repo:** the council runs and traces nothing,
+unless you switch Broadcast on in your own OpenRouter account. That is the whole
+integration.
+
+Two corrections to what this section used to say, both wrong for months:
+
+- It told you to set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`. Setting them
+  flipped one boolean in a local log line and changed nothing else. `LANGFUSE_HOST` was
+  read by no line of code at all.
+- It described the destination as "self-hosted via `langfuse-devops-lab`". That project
+  uses **Langfuse Cloud, EU region**. Nothing here is self-hosted.
+
+The cost of routing ingestion through an account setting is that **the repo cannot prove
+it works** — no test can reach a checkbox in someone's dashboard. It was verified by hand
+for the first time on 2026-08-31, and it does work: runs going back weeks, grouped by
+session, with per-call cost. That it took until then to look is the point. No number here,
+deliberately — a count in a README is a fact with a shelf life and no gate behind it.
 
 ## Run tests
 
@@ -125,13 +142,21 @@ repository inactivity, silently. The job posts a check-in to a Sentry cron monit
 (`llm-council-e2e`), the kind of alarm that fires on the **absence** of a signal. The
 check-in never fails the build: a guard that kills what it guards is worse than no guard.
 
-**Honest limit, verified 2026-08-13:** that monitor exists with the right schedule and
-receives its check-ins, but it is **not alerting**. Sentry includes exactly one cron monitor
-per plan and the seat is taken by another project; monitors past the quota are registered and
-left inactive until reserved quota or a pay-as-you-go budget activates them. So the missed-run
-case — the one this is for — is currently *instrumented but not alarmed*. Written down rather
-than quietly implied, because a monitor everyone believes in and that never fires is worse than
-no monitor at all.
+**Honest limit, re-measured 2026-08-31 — and it is worse than this file used to say.** The
+monitor exists with the right schedule and is **`disabled`**. It has never recorded a single
+check-in. Sentry includes one cron monitor per plan and the seat is held by another project;
+monitors past the quota are registered and left inactive.
+
+The correction matters because the previous wording — *"receives its check-ins, but it is not
+alerting"* — described something that does not happen. Queried directly: `status: disabled`,
+*"No check-ins found"*, and `ok=0 error=0 missed=0` for the hour of 2026-08-31 in which the
+E2E ran and its own log printed `check-in Sentry: error`. **The check-in is sent and thrown
+away.** Not instrumented-but-silent: not instrumented.
+
+So the missed-run case — the one this is for — is **unguarded**, and was while the E2E sat red
+for a week after 2026-08-24 with nobody noticing. Written down instead of quietly implied,
+because a monitor everyone believes in and that never fires is worse than no monitor at all —
+and a README that says it is working is exactly how everyone comes to believe in it.
 
 ## Pipeline level
 
