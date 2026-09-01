@@ -17,6 +17,8 @@ import os
 import sys
 import tempfile
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -27,6 +29,32 @@ from council.__main__ import _stderr, load_env  # noqa: E402
 from council.config import MAX_RETRIES, RETRY_BACKOFF_SECONDS  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@contextmanager
+def _pristine_council_logger() -> Iterator[logging.Logger]:
+    """Reopens `_build_logger`'s body on the REAL logger, and puts the state back.
+
+    The first draft did this by patching `logging.getLogger` to hand back a throwaway
+    logger — and `obs.logging` **is** the stdlib module, so that replaced `getLogger`
+    process-wide for the duration. It passed under `unittest` and under `pytest` here, and
+    broke the suite inside mutmut's tree in CI: `test_prompt_isolation.py` found five
+    handlers on the council logger where it demands one, and mutmut aborted before trying a
+    single mutant — a gate that reports nothing while looking busy.
+
+    This is the shape `tests/test_observability.py` already used. Monkeypatching the standard
+    library to isolate a test isolates nothing; it moves the mess somewhere less visible.
+    """
+    logger = logging.getLogger("council")
+    saved_handlers = logger.handlers[:]
+    saved_level, saved_propagate = logger.level, logger.propagate
+    logger.handlers.clear()
+    try:
+        yield logger
+    finally:
+        logger.handlers[:] = saved_handlers
+        logger.setLevel(saved_level)
+        logger.propagate = saved_propagate
 
 
 class TestTheLogLevelCannotBeWeaponised(unittest.TestCase):
@@ -43,17 +71,13 @@ class TestTheLogLevelCannotBeWeaponised(unittest.TestCase):
     # wipes that too, so every mutant runs as the ORIGINAL and is reported `survived`. The
     # first draft of this file used `clear=True` and made 11 of its 14 tests invisible to the
     # gate — a test written to guard a security control, guarding it only under `unittest`.
-    # The convention below is the one already used in `tests/test_observability.py`.
     def _level_for(self, value: str | None) -> int:
         env = {} if value is None else {"COUNCIL_LOG_LEVEL": value}
-        with patch.dict(os.environ, env, clear=False):
+        with patch.dict(os.environ, env, clear=False), _pristine_council_logger() as logger:
             if value is None:
                 os.environ.pop("COUNCIL_LOG_LEVEL", None)
-            logger = logging.getLogger(f"council-test-{value!r}")
-            logger.handlers.clear()
-            with patch.object(obs.logging, "getLogger", return_value=logger):
-                obs._build_logger()
-        return logger.level
+            obs._build_logger()
+            return logger.level
 
     def test_a_junk_level_falls_back_instead_of_raising(self) -> None:
         for value in ("", "LOUD", "42x", "  ", "DEBUG; DROP TABLE", "ínfo", "DEBUG DEBUG"):
@@ -92,12 +116,9 @@ class TestTheLogLevelCannotBeWeaponised(unittest.TestCase):
         SECOND, differently formatted copy of every record into that same file — and
         `read_telemetry` would count the copies as extra calls.
         """
-        with patch.dict(os.environ, {}, clear=False):
-            logger = logging.getLogger("council-test-propagate")
-            logger.handlers.clear()
-            with patch.object(obs.logging, "getLogger", return_value=logger):
-                obs._build_logger()
-        self.assertFalse(logger.propagate)
+        with _pristine_council_logger() as logger:
+            obs._build_logger()
+            self.assertFalse(logger.propagate)
 
     def test_telemetry_cannot_be_silenced_below_info(self) -> None:
         """`CRITICAL` would drop every `emit()` — the records are logged at INFO.
