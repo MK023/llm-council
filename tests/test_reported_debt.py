@@ -109,16 +109,9 @@ class TestTheLogLevelCannotBeWeaponised(unittest.TestCase):
     def test_the_default_is_info(self) -> None:
         self.assertEqual(self._level_for(None), logging.INFO)
 
-    def test_records_do_not_propagate_to_the_root_logger(self) -> None:
-        """`council.stderr` is parsed one JSON object per line.
-
-        With propagation on, any root handler configured elsewhere in the process emits a
-        SECOND, differently formatted copy of every record into that same file — and
-        `read_telemetry` would count the copies as extra calls.
-        """
-        with _pristine_council_logger() as logger:
-            obs._build_logger()
-            self.assertFalse(logger.propagate)
+    # There is NO test pinning `propagate = False` here, and its absence is the point:
+    # setting it broke pytest's log capture badly enough to abort the mutation gate. See
+    # the note in `observability.py`.
 
     def test_telemetry_cannot_be_silenced_below_info(self) -> None:
         """`CRITICAL` would drop every `emit()` — the records are logged at INFO.
