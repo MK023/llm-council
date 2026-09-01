@@ -36,7 +36,29 @@ jobs:
     permissions:
       contents: read
     # Il cron gira solo sul repo di origine, mai sui fork che clonano il progetto.
-    if: github.repository == 'MK023/llm-council'
+    #
+    # E solo su `main`: `workflow_dispatch` accetta QUALUNQUE ref, quindi fino al
+    # 2026-09-01 il commento in testa al file — "solo cron e avvio manuale, entrambi sul
+    # ramo principale" — descriveva una guardia che nessuno imponeva.
+    #
+    # COSA QUESTA RIGA FA E COSA NON FA, perche' rivendicarla piu' larga sarebbe lo stesso
+    # difetto che sta chiudendo. GitHub esegue il workflow COME SI TROVA NEL REF
+    # DISPATCHATO: chi ha accesso in scrittura puo' riscrivere questo `if:` sul proprio
+    # branch e dispatchare quello. Quindi NON e' un controllo contro un collaboratore
+    # ostile — per quello servono un ruleset o un Environment con required reviewers.
+    # E' un controllo contro il dispatch distratto da un ramo di lavoro, e rende vera la
+    # frase in testa al file. Sullo `schedule` non cambia niente: GitHub documenta
+    # `GITHUB_REF` = ramo di default, e *"scheduled workflows will only run on the default
+    # branch"*, quindi la sentinella settimanale non e' toccata.
+    #
+    # La guardia vale SOLO su `workflow_dispatch`, ed e' una correzione al primo tentativo:
+    # applicarla a ogni evento legava la sentinella settimanale al NOME del ramo. Il giorno
+    # di una rinomina la E2E smetterebbe **in silenzio** — un job saltato non e' rosso, e il
+    # check-in Sentry vive dentro lo stesso job, quindi non se ne accorgerebbe nessuno.
+    # Difendersi da un dispatch distratto rompendo il cron sarebbe stato un pessimo scambio.
+    if: >-
+      github.repository == 'MK023/llm-council'
+      && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -103,7 +125,9 @@ jobs:
           python -m council "$QUESTION" 2>council.stderr
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
           cat council.stderr >&2
-          echo "::${STOP_TOKEN}::"
+          # Nessun `echo` di chiusura qui: ci pensa il trap, su ogni percorso. Con
+          # entrambi, la run del 2026-09-01 ha stampato `::***::` DUE volte — innocuo, ma
+          # rumore, e due modi di fare la stessa cosa sono due modi di divergere.
 
       # Il contratto d'uscita è il test. 3 = degradato: la risposta esiste ma un
       # votante è caduto, ed è ESATTAMENTE il caso che questo job deve scoprire.

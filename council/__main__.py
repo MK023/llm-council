@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Final
 
 from council import __version__
-from council.client import OpenRouterClient, OpenRouterError
+from council.client import _CONTROL_CHARS, OpenRouterClient, OpenRouterError
 from council.config import MAX_QUESTION_LENGTH, MAX_TOTAL_TOKENS_PER_RUN
 from council.observability import TraceContext, emit, hash_question
 from council.stages import (
@@ -44,6 +44,23 @@ _ALLOWED_ENV_KEYS: Final[frozenset[str]] = frozenset({"OPENROUTER_API_KEY"})
 _MAX_ENV_BYTES: Final[int] = 64 * 1024
 
 
+def _stderr(message: str) -> None:
+    """The ONLY writer to stderr in this module, and it flattens what it writes.
+
+    `council.stderr` is no longer just a log: `scripts/langfuse_check.py` parses it, one JSON
+    object per line, to decide how many calls the council actually made. A newline in
+    anything printed here is therefore a way to ADD A RECORD, not a cosmetic detail — the
+    review of #40 reproduced exactly that through an `--env` path containing one, and read
+    back three generations that never happened.
+
+    `OpenRouterError` already flattens its own message, but it was one writer out of ten and
+    the other nine interpolate exception text and filesystem paths just the same. A guard on
+    one producer of a shared sink is not a guard on the sink;
+    `tests/test_reported_debt.py` fails if any `print(..., file=sys.stderr)` reappears here.
+    """
+    print(str(message).translate(_CONTROL_CHARS), file=sys.stderr)
+
+
 def _resolve_env_path(env_path: Path) -> Path | None:
     """Resolves the .env path and refuses anything that is not a plain local file.
 
@@ -75,12 +92,15 @@ def load_env(env_path: Path) -> None:
     # Security: warn if .env is world/group readable
     mode = resolved.stat().st_mode
     if mode & (stat.S_IRGRP | stat.S_IROTH):
-        print(
+        _stderr(
             f"WARNING: {resolved} is readable by group/others (mode={oct(mode)[-3:]}). "
-            "Run: chmod 600 .env",
-            file=sys.stderr,
+            "Run: chmod 600 .env"
         )
-    for line in resolved.read_text(encoding="utf-8", errors="replace").splitlines():
+    # `utf-8-sig` and not `utf-8`: a BOM sticks to the first key name, `strip()` does not
+    # remove it, the allow-list rejects the result, and the process exits 2 saying the key
+    # is "not set" when the truth is "present and silently discarded". Fail-closed, and
+    # unfindable — the file looks correct in every editor that hides the BOM.
+    for line in resolved.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         line = line.strip()
         # Difesa in profondita', deliberatamente ridondante: l'allowlist scarterebbe
         # comunque `#OPENROUTER_API_KEY`, che non e' una chiave valida. Per questo la
@@ -261,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         question = validate_question(args.question)
     except ValueError as exc:
-        print(f"INPUT ERROR: {exc}", file=sys.stderr)
+        _stderr(f"INPUT ERROR: {exc}")
         return 2
 
     try:
@@ -269,21 +289,18 @@ def main(argv: list[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         # A refused or unreadable --env is a configuration error like any other:
         # exit 2 with a message, never a traceback.
-        print(f"ENV ERROR: {exc}", file=sys.stderr)
+        _stderr(f"ENV ERROR: {exc}")
         return 2
 
     api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
-        print(
-            f"ERROR: OPENROUTER_API_KEY not set (looked in {args.env} and environment)",
-            file=sys.stderr,
-        )
+        _stderr(f"ERROR: OPENROUTER_API_KEY not set (looked in {args.env} and environment)")
         return 2
 
     try:
         client = OpenRouterClient(api_key)
     except ValueError as exc:
-        print(f"API KEY ERROR: {exc}", file=sys.stderr)
+        _stderr(f"API KEY ERROR: {exc}")
         return 2
 
     trace = TraceContext(question_hash=hash_question(question))
@@ -298,14 +315,14 @@ def main(argv: list[str] | None = None) -> int:
         s1 = stage1_responses(client, question, session_id=trace.trace_id)
     except OpenRouterError as exc:
         emit("stage1_failed", trace, error=str(exc), request_id=exc.request_id)
-        print(f"STAGE 1 FAILED: {exc}", file=sys.stderr)
+        _stderr(f"STAGE 1 FAILED: {exc}")
         return 1
     running_tokens += _report_stage1(s1, trace)
 
     try:
         _check_token_ceiling(running_tokens, trace)
     except RuntimeError as exc:
-        print(f"ABORT: {exc}", file=sys.stderr)
+        _stderr(f"ABORT: {exc}")
         return 4
 
     print("\n" + "=" * 72)
@@ -315,14 +332,14 @@ def main(argv: list[str] | None = None) -> int:
         s2 = stage2_rankings(client, question, s1, session_id=trace.trace_id)
     except OpenRouterError as exc:
         emit("stage2_failed", trace, error=str(exc), request_id=exc.request_id)
-        print(f"STAGE 2 FAILED: {exc}", file=sys.stderr)
+        _stderr(f"STAGE 2 FAILED: {exc}")
         return 1
     running_tokens += _report_stage2(s2, trace)
 
     try:
         _check_token_ceiling(running_tokens, trace)
     except RuntimeError as exc:
-        print(f"ABORT: {exc}", file=sys.stderr)
+        _stderr(f"ABORT: {exc}")
         return 4
 
     print("\n" + "=" * 72)
@@ -332,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         s3 = stage3_synthesis(client, question, s1, s2, session_id=trace.trace_id)
     except OpenRouterError as exc:
         emit("stage3_failed", trace, error=str(exc), request_id=exc.request_id)
-        print(f"STAGE 3 FAILED: {exc}", file=sys.stderr)
+        _stderr(f"STAGE 3 FAILED: {exc}")
         return 1
     running_tokens += s3.tokens
     emit(

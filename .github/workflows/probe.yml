@@ -42,7 +42,13 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    if: github.repository == 'MK023/llm-council'
+    # Solo il repo di origine E solo `main`: `workflow_dispatch` accetta qualunque ref, e
+    # questo job monta la chiave OpenRouter. Vedi la nota lunga in `e2e.yml` — qui il
+    # workflow ha SOLO `workflow_dispatch`, quindi la forma condizionata non serve, ma
+    # resta scritta uguale perche' due guardie gemelle che divergono sono peggio di una.
+    if: >-
+      github.repository == 'MK023/llm-council'
+      && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

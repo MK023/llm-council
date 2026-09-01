@@ -216,11 +216,16 @@ class TestTraceRecordCarriesHashNotContent(unittest.TestCase):
         Pinned to the algorithm, not to itself: comparing the function against a second
         call to the same function is tautological — it would pass even if the function
         returned a constant.
+
+        Sixteen characters since 2026-09-01, not eight. The reason is functional before it
+        is defensive: 32 bits is narrow enough for two unrelated questions to collide, and
+        telling runs apart is the entire job of this field. Hashes recorded before that date
+        do not correlate with hashes recorded after — a one-off break, taken deliberately.
         """
-        expected = hashlib.sha256(self.QUESTION.encode()).hexdigest()[:8]
+        expected = hashlib.sha256(self.QUESTION.encode()).hexdigest()[:16]
         actual = hash_question(self.QUESTION)
         self.assertEqual(actual, expected)
-        self.assertEqual(len(actual), 8)
+        self.assertEqual(len(actual), 16)
 
     def test_different_questions_hash_differently(self) -> None:
         first = hash_question("una domanda")

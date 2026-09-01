@@ -7,6 +7,90 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — what the reviews of the fixes found
+
+Both adversarial reviews came back **blocking**, and between them they caught four defects in
+work whose entire subject was *"a claim wider than the mechanism behind it"*.
+
+- **A tenth writer to stderr survived the conversion, and the test written to catch it could
+  not see it.** The gate matched lines containing `file=sys.stderr` *and* starting with
+  `print(` — and the survivor was a `print(` the formatter had split across lines, so neither
+  of its lines satisfied both halves. It counted one writer, reported OK, and the one it
+  missed interpolated `args.env`, which this project's own threat model calls
+  attacker-influenced. **It is the same shape as the `test ! -f requirements.txt` guard
+  already recorded in `CLAUDE.md`**: a check written against the surface form of the code
+  instead of its meaning, green against the very defect it exists to catch. Parsed with `ast`
+  now, and it also sees `sys.stderr.write`, which the old one was equally blind to.
+- **The tests guarding the log level were invisible to the mutation gate.** They used
+  `patch.dict(os.environ, …, clear=True)`, and mutmut's trampoline selects which mutant to
+  activate by reading `MUTANT_UNDER_TEST` **from the environment** — so clearing it ran every
+  mutant as the original and reported it survived. Eleven of fourteen tests in the file were
+  attributed to nothing, the score read 87.8% instead of 88.0%, and the gate for the log-level
+  finding defended nothing. The correct convention was already two files away in
+  `tests/test_observability.py`: `clear=False` plus a `pop` of the single key.
+- **`RETRY_BACKOFF_SECONDS = (0, 0)` and `(2, 2)` passed the whole suite.** The new tests
+  pinned the length and the ordering, and the only test touching the values compared them
+  against the tuple itself. The finding is measured in *seconds*, so the seconds are what had
+  to be pinned — the same "fix the symbol, not the number" mistake, caught for the third time
+  in two days.
+- **The `github.ref` guard was tied to the branch NAME on every event.** On a rename the
+  weekly sentinel would have stopped **silently** — a skipped job is not a red job, and the
+  Sentry check-in lives inside that same job. It now applies only to `workflow_dispatch`.
+  GitHub documents `GITHUB_REF` on a `schedule` trigger as the default branch, and that
+  *"scheduled workflows will only run on the default branch"*, so the cron was never at risk;
+  the guard was. And the comment beside it claimed a defence against a hostile collaborator
+  that it does not provide — GitHub runs the workflow **as it exists in the dispatched ref**,
+  so anyone with write access edits the `if:` on their own branch. It stops a careless
+  dispatch; the real control is a ruleset or an Environment with required reviewers, and the
+  comment says so now.
+
+### Fixed — the six things that had been written down instead of fixed
+
+They were reported and left alone under the project's own rule — *notice a problem nobody
+asked you to solve: say it, do not fix it* — and closed on 2026-09-01 when asked to. None was
+a regression; all six predate the work of 2026-08-31. Each one now has a test, because a debt
+paid without a gate is a debt that comes back.
+
+- **`COUNCIL_LOG_LEVEL` was a switch on the outside of the door.** Read straight from the
+  environment and handed to `setLevel()`, it had two failure modes and the quiet one was
+  worse: an unknown value raised `ValueError` and killed the process, while a valid-but-high
+  value silenced **every** telemetry record — the run still succeeds, the log says nothing,
+  and the new Langfuse check reads an empty file and reports that the council emitted nothing
+  at all. It is now an allow-list capped at INFO: `DEBUG` is the only genuine choice, because
+  every record is emitted at INFO and anything above is a silencer wearing the costume of a
+  verbosity setting.
+- **`question_hash` was 32 bits.** Widened to 64, and the argument is functional before it is
+  defensive: the field exists to tell runs on the same question apart from runs on a different
+  one, and eight hex characters are narrow enough for two unrelated questions to collide and
+  quietly merge. The confidentiality angle is thin and now written down rather than implied —
+  a truncated unsalted digest can be *confirmed* by anyone holding a candidate question, but
+  in the one place these hashes are public the question is public too, because it is in
+  `e2e.yml`. A salt would close that and destroy the correlation the field exists for.
+  **Hashes from before this change do not correlate with hashes after it.**
+- **A UTF-8 BOM made the API key vanish in silence.** `.env` was read as `utf-8`, the BOM
+  stuck to the first key name, `strip()` does not remove it, the allow-list rejected the
+  result, and the process exited 2 saying the key was "not set" when the truth was "present
+  and silently discarded" — in a file that looks correct in every editor that hides the BOM.
+- **`RETRY_BACKOFF_SECONDS` had a dead entry.** `(1, 2, 4)` with `MAX_RETRIES = 3` never
+  reached the `4`, because the loop sleeps *between* attempts. That unreachable entry was read
+  as truth: three documents stated the backoff totalled seven seconds when it totalled three,
+  which is part of why the Mistral rate limit looked survivable for two Mondays. The tuple is
+  now `(1, 2)` and a test pins its length to `MAX_RETRIES - 1`, so the two cannot drift apart
+  in either direction.
+- **Ten writers reached `council.stderr` and one of them was guarded.** `OpenRouterError`
+  flattened its own message; the other nine interpolated exception text and filesystem paths
+  into a file that `scripts/langfuse_check.py` now *parses*, one JSON object per line. A guard
+  on one producer of a shared sink is not a guard on the sink. There is a single writer now,
+  and a test fails if a second `print(…, file=sys.stderr)` ever reappears.
+- **`e2e.yml` described a branch guard nobody had implemented.** Its header said cron and
+  manual runs both happen on the main branch; `workflow_dispatch` accepts **any** ref. Both
+  workflows that mount the repository's secrets now check `github.ref`. Enforced rather than
+  reworded — the sentence is true because the job tests it, which is the whole lesson of the
+  last two days.
+- Also: the E2E printed the closing fence **twice**, because the explicit `echo` from #40 was
+  left beside the trap that replaced it. Harmless, and two ways of doing one thing are two
+  ways to drift.
+
 ### Security — "printed as text" had a consumer where it was false
 
 - **In GitHub Actions a log line starting at column 0 with `::` is a command to the runner**,

@@ -93,6 +93,22 @@ class TestUntrustedOutputIsFenced(unittest.TestCase):
                 self.assertRegex(body, r"trap 'exit \d+' TERM INT")
 
 
+class TestOnlyMainCanCarryTheSecrets(unittest.TestCase):
+    """The header of `e2e.yml` said cron and manual runs both happen on the main branch.
+
+    `workflow_dispatch` accepts **any** ref, so that sentence described a guard nobody had
+    implemented. Exploiting it needs an account with write access, so it was never urgent —
+    but these two files mount the repository's secrets, and a comment asserting a control
+    that does not exist is precisely the defect this series spent two days closing.
+    Enforced rather than reworded: the claim is true now because the job checks it.
+    """
+
+    def test_the_secretful_workflows_refuse_a_ref_other_than_main(self) -> None:
+        for name in FENCED_WORKFLOWS:
+            with self.subTest(workflow=name):
+                self.assertIn("github.ref == 'refs/heads/main'", _body(name))
+
+
 class TestTheJobsAreBounded(unittest.TestCase):
     """A workflow with no `timeout-minutes` inherits GitHub's default of six hours."""
 
