@@ -229,10 +229,17 @@ paid without a gate is a debt that comes back.
   It does not receive them. Queried directly on 2026-08-31: `status: disabled`, *"No check-ins
   found"*, and `ok=0 error=0 missed=0` for the very hour in which the E2E ran and its own log
   printed `check-in Sentry: error`. **The check-in is sent and thrown away.** Not
-  instrumented-but-silent — not instrumented. The missed-run case is unguarded, and was while
-  the E2E sat red for a week after 2026-08-24. Found by the review, which noticed that this
+  instrumented-but-silent — not instrumented. Found by the review, which noticed that this
   commit was removing a false indicator from the logs while leaving the identical false
   indicator in the most-read file in the repo.
+- **And the conclusion drawn from that measurement was itself too wide — corrected here.** The
+  entry above first went on to say *"the missed-run case is unguarded"*. It is not: since
+  2026-08-14 `scripts/sentinella-cron.mjs` in the site repo (workflow `sentinella-cron.yml`,
+  daily) polls the GitHub API and alarms when `llm-council-e2e` has been quiet more than 10
+  days. Sentry was queried, `disabled` was seen, and nothing outside this repo was looked at —
+  the same defect the rest of this release closes, committed while closing it. The unguarded
+  case is the **other** one, started and *failed*, which is how the E2E sat red for a week
+  after 2026-08-24.
 - **`SECURITY.md` still said "only four allowlisted keys are imported"** under LLM06, citing a
   test class this very commit modifies — so the document had been opened and the number had
   not. `test_security_doc.py` checks that a cited test exists, never that a number in prose is

@@ -181,10 +181,18 @@ never by patching `logging.getLogger` — `obs.logging` *is* the stdlib module.
   real figure); `totalPrice` is null — no Langfuse price sheet for these models. Reading the
   wrong one says "Langfuse does not track cost", which is false.
 - **The Sentry cron monitor `llm-council-e2e` is `disabled` and has never checked in.** Free
-  plan, one active monitor per account, seat held by `supabase-keepalive`. The long comment
-  in `e2e.yml` therefore describes a guard that is **not running**: nothing notices if the
-  weekly E2E never starts. Known blind spot as of 2026-08-31, replacement under evaluation —
-  and the reason the E2E sat red for a week unseen.
+  plan, one active monitor per account, seat held by `supabase-keepalive`. The long comment in
+  `e2e.yml` therefore describes a guard that is **not running** — but *"nobody would notice a
+  missed run"*, written here on 2026-08-31, was **false and is corrected**: since 2026-08-14
+  `scripts/sentinella-cron.mjs` in `marcobellingeri.dev` (workflow `sentinella-cron.yml`,
+  daily) polls the GitHub API and, when `llm-council-e2e` has been quiet more than 10 days,
+  raises a Sentry event **and** opens an issue in the site repo. That guard is fail-open: an
+  API error for one entry is skipped with a warning, without a DSN the Sentry call is a no-op,
+  and its alarm path has never fired in production. **The blind spot is the other case —
+  started and *failed*** — visible only as red on Actions, which is how the E2E sat red for a
+  week unseen. Reached the wrong conclusion by querying Sentry, seeing `disabled`, and never
+  looking outside this repo: a claim wider than the measurement under it. Re-measured
+  2026-09-01, the `disabled` half still holds — `No check-ins found`, all stats zero.
 - Secrets: **Doppler** (`llm-council`, config `prd`) and GitHub Actions. `doppler run --`, never a printed value.
 - **`council.stderr` is parsed, not just read.** One writer — `_stderr()` flattens every line
   terminator, since a newline there *adds a record* to what `langfuse_check.py` counts. And
