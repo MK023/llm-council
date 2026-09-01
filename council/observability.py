@@ -36,10 +36,19 @@ def _build_logger() -> logging.Logger:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
-    # No propagation to the root logger. `council.stderr` is parsed one JSON object per
-    # line, and a root handler configured by anything else in the process would emit a
-    # SECOND, differently formatted copy of every record into the same file.
-    logger.propagate = False
+    # `logger.propagate = False` WAS here and is deliberately gone (2026-09-01).
+    #
+    # It was added against a theoretical double-emission: a root handler configured by an
+    # embedder would print a second copy of every record into the file `langfuse_check.py`
+    # parses. Nothing in this stdlib-only CLI configures the root logger, so nobody had
+    # shown the hole was reachable.
+    #
+    # The cost was not theoretical. pytest's logging plugin attaches ITS handlers directly
+    # to loggers that do not propagate, so under pytest 9.1.1 the `council` logger ended up
+    # with five — one ours, four pytest's — which broke `test_prompt_isolation.py` and made
+    # mutmut abort before trying a single mutant. Measured, not deduced:
+    #   logging.StreamHandler · _LiveLoggingNullHandler · _FileHandler · 2× LogCaptureHandler
+    # Speculative hardening that breaks a real gate is a bad trade, twice over.
     # `COUNCIL_LOG_LEVEL` is read from the real environment, so whoever controls the
     # environment controls the only telemetry this code produces. Two failure modes, and
     # the quiet one is the worse: an unknown value made `setLevel()` raise `ValueError`

@@ -151,12 +151,16 @@ installed, and that missing package had been recorded as a property of the hardw
 
 **A green local run does not predict CI.** Local is mutmut 3.6.0 + pytest 8.3.4; CI pins
 3.7.0 + 9.1.1. On 2026-09-01 local passed at 88.1% while CI aborted before trying a mutant.
-Iterate with it; never conclude from it. Two ways it aborts, both paid for:
-**a test importing from `scripts/` or reading outside `council/`** needs an `--ignore` line —
-mutmut copies neither, collection dies, and the gate reports zero while looking busy; and
-**monkeypatching `logging.getLogger`** to isolate a test is a process-wide swap (`obs.logging`
-*is* the stdlib module) that survives `unittest` and breaks in mutmut's copied tree. Use
-`_pristine_logger` from `test_observability.py`: save handlers/level/propagate, clear, restore.
+Iterate with it; never conclude from it — reproduce faithfully in a throwaway venv pinned to
+CI's versions instead of guessing, which cost two wrong fixes before it cost ten minutes.
+
+Two ways it aborts, both paid for. **A test importing from `scripts/` or reading outside
+`council/`** needs an `--ignore` line: mutmut copies neither, collection dies, and the gate
+reports zero while looking busy. And **never set `propagate = False` on the council logger** —
+pytest's plugin then attaches ITS handlers directly (measured: `_LiveLoggingNullHandler`,
+`_FileHandler`, 2× `LogCaptureHandler`), `test_prompt_isolation` finds five where it demands
+one, and mutmut aborts. Isolate a logger with `_pristine_logger` from `test_observability.py`,
+never by patching `logging.getLogger` — `obs.logging` *is* the stdlib module.
 
 ## Observability — the half that does not live in this repo
 
