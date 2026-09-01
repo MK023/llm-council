@@ -147,8 +147,8 @@ The unit suite still never touches the network — this is the one exception, an
 a schedule instead of in the PR loop so it can never slow down the development cycle.
 
 **And a watcher on the watcher.** A red run on Actions says the sentinel *failed*. Nothing
-says the sentinel never *ran* — and GitHub disables scheduled workflows after 60 days of
-repository inactivity, silently. The job posts a check-in to a Sentry cron monitor
+*in this repo* says the sentinel never *ran* (something outside it does — see below) — and
+GitHub disables scheduled workflows after 60 days of repository inactivity, silently. The job posts a check-in to a Sentry cron monitor
 (`llm-council-e2e`), the kind of alarm that fires on the **absence** of a signal. The
 check-in never fails the build: a guard that kills what it guards is worse than no guard.
 
@@ -163,10 +163,26 @@ alerting"* — described something that does not happen. Queried directly: `stat
 E2E ran and its own log printed `check-in Sentry: error`. **The check-in is sent and thrown
 away.** Not instrumented-but-silent: not instrumented.
 
-So the missed-run case — the one this is for — is **unguarded**, and was while the E2E sat red
-for a week after 2026-08-24 with nobody noticing. Written down instead of quietly implied,
-because a monitor everyone believes in and that never fires is worse than no monitor at all —
-and a README that says it is working is exactly how everyone comes to believe in it.
+**The missed-run case is guarded anyway — from outside this repo.** Since 2026-08-14,
+`scripts/sentinella-cron.mjs` in the site repo (workflow `sentinella-cron.yml`, daily) asks
+the GitHub API when each schedule last fired and, for whichever one has gone quiet, raises a
+Sentry event, fails its own run, and opens a GitHub issue — in the site repo, since the token
+is scoped there. `llm-council-e2e` is one of its entries, with a 10-day limit against a weekly
+schedule. It lives there because that repo commits on 13 days out of the last 31, never close
+to GitHub's 60-day cutoff, while this one goes in sprints: a guard that dies of the disease it
+watches for is no guard. That guard is in turn watched, by reciprocal coverage inside the site
+repo. The dead check-in above is a **second** net, kept because it costs nothing and works by
+itself the day the seat frees up.
+
+Its honest limit, so this paragraph does not repeat the mistake it corrects: that guard is
+fail-open by construction. A GitHub API error for one entry is skipped with a warning and no
+alarm, and without a DSN the Sentry call is a no-op. Its alarm path has never fired in
+production — only in the script's own offline self-check.
+
+**What nobody guards is the other case: started and *failed*.** Only the red run on Actions
+says that, and only to whoever looks — which is why the E2E sat red for a week after
+2026-08-24 unnoticed. The boundary is written down instead of quietly implied, because a
+monitor everyone believes in and that never fires is worse than no monitor at all.
 
 ## Pipeline level
 

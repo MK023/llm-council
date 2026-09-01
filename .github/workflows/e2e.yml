@@ -171,13 +171,28 @@ jobs:
       # occupato da un altro progetto. Questo step spedisce e Sentry butta: nella fascia
       # oraria in cui la E2E ha girato oggi, `ok=0 error=0 missed=0`. Tutto il ragionamento
       # qui sotto descrive quindi un guardiano CHE NON GIRA — resta perche' e' giusto e
-      # perche' il giorno che il posto si libera funziona da solo, ma finche' questa riga
-      # e' qui il caso "non e' partita affatto" NON e' sorvegliato da nessuno.
+      # perche' il giorno che il posto si libera funziona da solo.
       #
-      # Il job rosso su Actions segnala che la sentinella e' FALLITA. Nessuno pero'
-      # si accorge se non parte affatto — e GitHub disabilita gli schedule dopo 60
-      # giorni di inattivita' sul repo, in silenzio. Un cron monitor si allarma
-      # sull'ASSENZA del check-in, che e' l'unico modo di vedere quel caso.
+      # Il caso "non e' partita affatto" e' pero' coperto da FUORI, dal 14-08: nel repo
+      # del sito, `scripts/sentinella-cron.mjs` (workflow `sentinella-cron.yml`, giornaliero)
+      # interroga l'API GitHub e, se lo schedule `llm-council-e2e` tace da piu' di 10 giorni,
+      # manda un evento Sentry, fa fallire la propria run e apre una issue NEL REPO DEL SITO
+      # (il token vale solo la'). Vive la' perche' quel repo committa 13 giorni su 31, lontano
+      # dalla soglia GitHub dei 60, mentre questo va a sprint: una guardia che muore dello
+      # stesso male che sorveglia non serve a niente. Quindi questo step e' una SECONDA rete.
+      #
+      # Anche quella guardia e' fail-open, e va detto: un errore dell'API GitHub su una voce
+      # viene saltato con un warning e nessun allarme, senza DSN la chiamata a Sentry e' un
+      # no-op, e il percorso d'allarme non e' mai scattato in produzione — solo nel self-check.
+      #
+      # Cio' che nessuno sorveglia e' l'altro caso: partita e FALLITA. Lo dice solo il rosso
+      # su Actions, che va guardato a mano — e dal 24/08 al 31/08 e' stato rosso una
+      # settimana senza che nessuno guardasse.
+      #
+      # Il job rosso su Actions segnala che la sentinella e' FALLITA. Un cron monitor si
+      # allarma invece sull'ASSENZA del check-in — e GitHub disabilita gli schedule dopo
+      # 60 giorni di inattivita' sul repo, in silenzio: e' il caso che nessun rosso puo'
+      # mostrare, perche' non produce niente da vedere.
       #
       # `monitor_config` fa l'upsert: il monitor nasce da solo al primo check-in, e
       # la sua schedule sta qui accanto a quella vera sopra — se un giorno cambia il
