@@ -142,16 +142,21 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   we need a BYOK key" stood for three weeks and was false: a *smaller* Mistral answered fine.
   One measurement closed it.
 
-## The mutation gate runs locally — the interpreter is the whole story
+## The mutation gate — runs locally, proves nothing locally
 
-This file said *"CI ONLY: libcst ships no wheel for Apple x86_64"*. **Measured: it runs** —
-3.12.7, x86_64, ~690 mutants, ~88% against the floor. Under **3.10.14**, what bare `python`
-resolves to outside this directory, mutmut is simply not installed. A missing package under
-one interpreter had been recorded as a property of the hardware. Check `python -V` first:
-`$(pyenv root)/versions/3.12.7/bin/python -m mutmut run`.
-**Every test file importing from `scripts/` or reading outside `council/` needs an `--ignore`
-line in `pyproject.toml`** — mutmut copies neither, collection dies, and the gate reports zero
-mutants while looking busy.
+*"CI ONLY: libcst ships no wheel for Apple x86_64"* was wrong: it runs on 3.12.7, ~690
+mutants, ~88%. Under **3.10.14** — bare `python` outside this directory — mutmut is just not
+installed, and that missing package had been recorded as a property of the hardware. So:
+`$(pyenv root)/versions/3.12.7/bin/python -m mutmut run`, after checking `python -V`.
+
+**A green local run does not predict CI.** Local is mutmut 3.6.0 + pytest 8.3.4; CI pins
+3.7.0 + 9.1.1. On 2026-09-01 local passed at 88.1% while CI aborted before trying a mutant.
+Iterate with it; never conclude from it. Two ways it aborts, both paid for:
+**a test importing from `scripts/` or reading outside `council/`** needs an `--ignore` line —
+mutmut copies neither, collection dies, and the gate reports zero while looking busy; and
+**monkeypatching `logging.getLogger`** to isolate a test is a process-wide swap (`obs.logging`
+*is* the stdlib module) that survives `unittest` and breaks in mutmut's copied tree. Use
+`_pristine_logger` from `test_observability.py`: save handlers/level/propagate, clear, restore.
 
 ## Observability — the half that does not live in this repo
 
