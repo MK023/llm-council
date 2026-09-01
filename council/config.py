@@ -160,7 +160,13 @@ MAX_TOKENS_STAGE_3: Final[int] = 900
 TEMPERATURE: Final[float] = 0.5
 TIMEOUT_SECONDS: Final[int] = 90
 MAX_RETRIES: Final[int] = 3
-RETRY_BACKOFF_SECONDS: Final[tuple[int, ...]] = (1, 2, 4)
+# Exactly MAX_RETRIES - 1 entries, because the loop sleeps BETWEEN attempts and not after
+# the last one. It used to be `(1, 2, 4)` with MAX_RETRIES=3, so the `4` was unreachable —
+# and that dead entry was read as truth: three documents stated the backoff totalled seven
+# seconds when it totalled three, which is part of why the Mistral rate limit went unnoticed
+# for two Mondays. `tests/test_reported_debt.py` pins the length to the retry count so the
+# two cannot drift apart again in either direction.
+RETRY_BACKOFF_SECONDS: Final[tuple[int, ...]] = (1, 2)
 MAX_QUESTION_LENGTH: Final[int] = 4000
 
 # A rate limit is not a hiccup, and the backoff above was calibrated for hiccups.

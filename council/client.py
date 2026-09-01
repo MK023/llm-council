@@ -254,10 +254,14 @@ class OpenRouterClient:
                     wait_override = RATE_LIMIT_FALLBACK_SECONDS
 
             if attempt < MAX_RETRIES:
+                # Indice diretto: il `min()` che stava qui e' diventato codice morto quando
+                # la tupla e' passata a esattamente `MAX_RETRIES - 1` elementi, e un clamp
+                # che non puo' mai scattare e' una riga che nessun test potra' coprire.
+                # A tenere l'invariante e' `test_reported_debt.py::test_every_entry_is_reachable`.
                 backoff = (
                     wait_override
                     if wait_override is not None
-                    else RETRY_BACKOFF_SECONDS[min(attempt - 1, len(RETRY_BACKOFF_SECONDS) - 1)]
+                    else RETRY_BACKOFF_SECONDS[attempt - 1]
                 )
                 time.sleep(backoff)
 

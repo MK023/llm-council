@@ -144,23 +144,22 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
 
 ## The mutation gate runs locally — the interpreter is the whole story
 
-This file said *"CI ONLY: libcst ships no wheel for Apple x86_64"*. **Measured 2026-08-31: it
-runs.** Python 3.12.7, x86_64, 693 mutants, 87.9% against the floor. On **3.10.14** — what
-bare `python` resolves to outside this directory — mutmut is not installed and dies with
-`No module named mutmut`. Same machine. A missing package under one interpreter was written
-down as a property of the hardware, and that made a five-minute local gate look impossible.
-Check `python -V` before believing the wheel story:
+This file said *"CI ONLY: libcst ships no wheel for Apple x86_64"*. **Measured: it runs** —
+3.12.7, x86_64, ~690 mutants, ~88% against the floor. Under **3.10.14**, what bare `python`
+resolves to outside this directory, mutmut is simply not installed. A missing package under
+one interpreter had been recorded as a property of the hardware. Check `python -V` first:
 `$(pyenv root)/versions/3.12.7/bin/python -m mutmut run`.
+**Every test file importing from `scripts/` or reading outside `council/` needs an `--ignore`
+line in `pyproject.toml`** — mutmut copies neither, collection dies, and the gate reports zero
+mutants while looking busy.
 
 ## Observability — the half that does not live in this repo
 
 - **Nothing here sends a trace to Langfuse.** `observability.py` writes JSON to stderr and
-  stops. Ingestion is **OpenRouter Broadcast**, a checkbox in the OpenRouter account, and
-  the only thing the code contributes is the `user` / `session_id` / `trace` fields in the
-  request body. **No environment variable in this project turns it on.** Three that looked
-  like they did — plus a `langfuse_opt_in` field that went true when they existed — were
-  removed on 2026-08-31: a lamp wired to nothing reads as proof, and made an unverified
-  fact look checked.
+  stops. Ingestion is **OpenRouter Broadcast**, a checkbox in the account; the code only
+  contributes the `user` / `session_id` / `trace` fields. **No environment variable turns it
+  on.** Three that looked like they did — plus a `langfuse_opt_in` field that went true when
+  they existed — were removed: a lamp wired to nothing made an unverified fact look checked.
 - **`scripts/langfuse_check.py`** (from `e2e.yml`) is the only thing measuring that half:
   warning-only, always exit 0, alarms on *"no complete run in 8 days"* — never on the run it
   just watched, since ingestion may lag 15 minutes.
@@ -178,6 +177,10 @@ Check `python -V` before believing the wheel story:
   weekly E2E never starts. Known blind spot as of 2026-08-31, replacement under evaluation —
   and the reason the E2E sat red for a week unseen.
 - Secrets: **Doppler** (`llm-council`, config `prd`) and GitHub Actions. `doppler run --`, never a printed value.
+- **`council.stderr` is parsed, not just read.** One writer — `_stderr()` flattens every line
+  terminator, since a newline there *adds a record* to what `langfuse_check.py` counts. And
+  `COUNCIL_LOG_LEVEL` is capped at INFO: above it telemetry goes silent and the check sees an
+  empty run.
 
 ## Security
 
