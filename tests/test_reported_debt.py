@@ -124,8 +124,16 @@ class TestTheQuestionHashIsWideEnoughToCorrelate(unittest.TestCase):
     def test_different_questions_get_different_hashes(self) -> None:
         self.assertNotEqual(obs.hash_question("a"), obs.hash_question("b"))
 
-    def test_the_same_question_correlates_across_calls(self) -> None:
-        self.assertEqual(obs.hash_question("stessa domanda"), obs.hash_question("stessa domanda"))
+    # Determinism — "the same question hashes the same way" — is pinned by
+    # `test_stages.py::test_the_hash_is_a_stable_sha256_prefix`, which compares against
+    # `hashlib.sha256(...)` directly.
+    #
+    # The first draft asserted it here as `assertEqual(f(x), f(x))`, which SonarCloud
+    # flagged (python:S5863) and was right to: comparing a function against a second call
+    # to itself passes even if the function returns a constant. The warning was already
+    # written in this repo, in the docstring of that very test, in a file this same PR
+    # edits. Removed rather than rewritten — a second copy of an existing assertion is
+    # not worth the line.
 
 
 class TestABomDoesNotSwallowTheKey(unittest.TestCase):
