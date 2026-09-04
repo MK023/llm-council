@@ -194,17 +194,22 @@ and everybody trusted. Required checks are **strict**: a branch behind `main` ca
 it is updated, because a green run against a stale base says nothing about the merge result.
 No bypass actors, admins included.
 
-Ten checks are **required** by that ruleset, which is the difference between a gate that runs
-and a gate that blocks:
+Twelve checks are **required** by that ruleset, which is the difference between a gate that
+runs and a gate that blocks:
 
 ```
-Lint (ruff) · Tests (Python 3.10 / 3.11 / 3.12) · Coverage
+Lint (ruff) · Tests (Python 3.10 / 3.11 / 3.12 / 3.13 / 3.14) · Coverage
 CodeQL · SonarQube Cloud · Workflow lint (zizmor)
 Secret scan (gitleaks) · Dependency review
 ```
 
-The last two were **added to the required list on 2026-08-14**, and until then this section
-claimed they blocked the merge while they only ran: they arrived with the supply-chain work of
+**3.13 and 3.14** arrived on 2026-09-04 with the matrix that produces them, and the ruleset was
+edited in the same change: a required check is named, not matched by pattern, so widening the
+matrix alone would have added two jobs that run and do not block — the exact failure the next
+paragraph describes. Verified through the API after the edit, not assumed from having sent it.
+
+**Secret scan and dependency review** were added to the required list on **2026-08-14**, and
+until then this section claimed they blocked the merge while they only ran: they arrived with the supply-chain work of
 2026-08-13 and nobody added them to a ruleset last edited in July. A check that runs and does
 not block is a check whose red is a matter of opinion. Found by reading the ruleset through the
 API instead of trusting this paragraph — which is the only way that class of drift ever surfaces.
@@ -222,7 +227,7 @@ What each gate blocks on, because a gate without a written policy is a future
 | Gate | Blocks on | Notes |
 |---|---|---|
 | **Secret scan** (gitleaks) | any finding — zero tolerance | one allowlisted string, the Sonar project key, which is public by construction |
-| **Tests** (3.10/3.11/3.12) | any failure | includes the stdlib-only invariant, see below |
+| **Tests** (3.10 → 3.14) | any failure | includes the stdlib-only invariant, see below |
 | **Coverage** | below 100% lines+branches; below 90% on `client`/`config`/`stages` | a floor, not a quality claim |
 | **Mutation score** | below 85% — **weekly, off the PR path** | the claim the coverage number cannot make |
 | **Dependency review** | a vulnerable dependency entering the diff | nothing to review today, which is the point |

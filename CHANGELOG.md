@@ -7,6 +7,48 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed — the machine moved, and five documents were describing the old one
+
+The development machine became **Ubuntu 26.04 x86_64** on 2026-09-04, where `apt` offers a
+single interpreter: **3.14**. No `pyenv`, no bare `python`, no 3.12 to fall back to. Every
+note in the repository that described the previous laptop was false the moment that happened,
+and two of them were instructions someone would follow.
+
+- **CI's matrix ran 3.10 / 3.11 / 3.12 while `requires-python` promised `>=3.10` with no upper
+  bound.** The manifest claimed every release above the floor and the gate checked three of
+  them, so the version the code is now written on was the one version nothing tested. The
+  matrix runs **3.10 → 3.14**, `pyproject` declares the two new classifiers, and the ruleset's
+  required checks were extended with them in the same change — a required check is named, not
+  matched by pattern, so widening the matrix alone would have added two jobs that run and do
+  not block, which is the exact defect `README.md` documents about the 2026-08-14 ruleset.
+- **The mutation job moved to 3.14.** `CLAUDE.md`'s standing instruction for that gate is
+  *"reproduce CI faithfully in a throwaway venv pinned to CI's versions"* — written after a
+  green local run failed to predict a CI abort on 2026-09-01 — and it had quietly become
+  impossible to follow: the machine cannot install 3.12. Measured before the change, in a venv
+  built from `requirements-mutation.txt` on 3.14 with the pinned mutmut 3.7.0 and pytest 9.1.1:
+  **697 mutants, 614 killed, 88.1%** against the floor of 85.
+- **`mutation.yml` still justified a step with *"mutmut cannot run on an Apple x86_64 (libcst
+  ships no wheel), so nobody can ask it locally"*.** `CLAUDE.md` had already recorded that as
+  false on the old laptop; on Linux the whole pinned set installs on 3.14. The step stays — the
+  survivor diffs are still the difference between writing an assertion and guessing at one, a
+  week at a time — but on a reason that is true.
+- **`sonar-project.properties` pinned `sonar.python.version` to 3.10, 3.11, 3.12** — the matrix
+  written a second time, in another format, feeding a gate that *blocks*. Widening `ci.yml`
+  without it would have left SonarQube judging three versions out of five, with any 3.13- or
+  3.14-specific finding outside the analysis and nothing turning red to say so. Found by a
+  review of this change and not by a gate, which is why the file now says out loud that
+  whoever widens the matrix edits this line too.
+- Three more sentences said *local* meant macOS (`requirements-dev.txt`,
+  `scripts/pin_dev_deps.py`, `tests/test_pin_dev_deps.py`), and `CLAUDE.md` pointed at
+  `~/GitHub/agentic-os/CLAUDE.md`, a path that no longer exists. The macOS wheels stay in the
+  lockfile filter for a second environment; only the claim about who installs from them
+  changed.
+
+Nothing in `council/` was touched. The whole suite was re-measured on 3.14 before any of it:
+green, coverage 100% lines and branches, ruff clean, zizmor clean, gitleaks clean, mutation
+88.1%.
+
+
 ### Fixed — what the reviews of the fixes found
 
 Both adversarial reviews came back **blocking**, and between them they caught four defects in

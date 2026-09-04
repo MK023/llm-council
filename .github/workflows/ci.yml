@@ -24,7 +24,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # `requires-python = ">=3.10"` has no upper bound, so the manifest promises every
+        # release above the floor and the matrix only ever checked three of them. 3.13 and
+        # 3.14 were added on 2026-09-04, when the development machine moved to Ubuntu 26.04
+        # — whose only apt-installable interpreter is 3.14. Until then the version the code
+        # was written on was the one version nothing tested: measured green on 3.14 before
+        # the change (suite, coverage 100%, mutation 88.1%), then written down here so the
+        # gate says it and not a person.
+        #
+        # 3.13 was NOT measured anywhere first, and the honest reason is that the machine
+        # cannot install it: this run is its first execution. If the suite trips on
+        # something 3.13-specific, this is the PR that eats the red — which is the point of
+        # adding it, and is written here rather than left as a surprise.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

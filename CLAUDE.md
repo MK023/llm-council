@@ -7,7 +7,7 @@
 
 <!--
 CRITERIO DI QUESTO FILE, 25/08/2026 — primo CLAUDE.md di questo repo, scritto sul modello di
-~/GitHub/agentic-os/CLAUDE.md. Aprilo con Read: il criterio completo, la procedura di
+/home/marco/projects/agentic-os/CLAUDE.md. Aprilo con Read: il criterio completo, la procedura di
 trasloco e il collaudo stanno nei suoi commenti in testa.
 
 Tre caselle, ogni riga sta in una sola:
@@ -85,7 +85,7 @@ python -m coverage run -m unittest discover tests/ && python -m coverage report
 python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 ruff check council/ tests/ scripts/ && ruff format --check council/ tests/ scripts/
 zizmor .github/workflows/
-mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # gira in locale SOLO su 3.12: vedi sotto
+mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # in un venv da requirements-mutation.txt, 3.14: vedi sotto
 python scripts/pin_dev_deps.py                             # never hand-edit the -dev/-mutation lockfiles
 ```
 
@@ -142,17 +142,43 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   we need a BYOK key" stood for three weeks and was false: a *smaller* Mistral answered fine.
   One measurement closed it.
 
-## The mutation gate — runs locally, proves nothing locally
+## The machine — Ubuntu 26.04, Python 3.14, no pyenv
 
-*"CI ONLY: libcst ships no wheel for Apple x86_64"* was wrong: it runs on 3.12.7, ~690
-mutants, ~88%. Under **3.10.14** — bare `python` outside this directory — mutmut is just not
-installed, and that missing package had been recorded as a property of the hardware. So:
-`$(pyenv root)/versions/3.12.7/bin/python -m mutmut run`, after checking `python -V`.
+**The development machine changed on 2026-09-04** and every note here that described the old
+one was wrong the moment it did. It is Ubuntu 26.04 x86_64, and `apt` offers exactly one
+interpreter: **3.14**. There is no `pyenv`, no bare `python`, no 3.12 to fall back to —
+`python3` is 3.14.4. The whole toolchain installs there under `--require-hashes`, dev set and
+mutation set alike, and every gate was re-measured on it before anything here changed: suite
+green, coverage 100% lines and branches, ruff clean, zizmor clean, gitleaks clean, mutation
+88.1%.
 
-**A green local run does not predict CI.** Local is mutmut 3.6.0 + pytest 8.3.4; CI pins
-3.7.0 + 9.1.1. On 2026-09-01 local passed at 88.1% while CI aborted before trying a mutant.
-Iterate with it; never conclude from it — reproduce faithfully in a throwaway venv pinned to
-CI's versions instead of guessing, which cost two wrong fixes before it cost ten minutes.
+That is why **CI's matrix now runs 3.10 → 3.14** and the mutation job moved to 3.14. Before
+that, the version the code was written on was the one version nothing tested, and the gate a
+human is told to reproduce ran on a version that machine cannot install. The old notes are
+kept below only where the lesson outlived the hardware.
+
+**The supported-version list lives in FOUR places and nothing checks that they agree**:
+`ci.yml`'s matrix, `pyproject`'s classifiers, `sonar.python.version` in
+`sonar-project.properties`, and the **required checks of the `protect-main` ruleset**, which is
+not in the repository at all. The last two are the ones that bite. A required check is matched
+by NAME, so a wider matrix adds jobs that run and do not block until the ruleset is edited —
+and Sonar, a blocking gate, keeps analysing the semantics of whatever versions that one line
+says, so a 3.14-only finding falls outside the analysis with nothing turning red. Both were
+missed on 2026-09-04 and caught by a review, not by a gate. Widen the matrix, edit all four.
+
+## The mutation gate — now reproducible locally, and only inside the venv
+
+*"CI ONLY: libcst ships no wheel for Apple x86_64"* was wrong twice: it ran on the old 3.12.7,
+and on Linux the whole pinned set installs on 3.14. Measured 2026-09-04 in a throwaway venv:
+**697 mutants, 614 killed, 88.1%** against the floor of 85 — `mutmut run`,
+`mutmut export-cicd-stats`, then `scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85`.
+
+**A green local run still does not predict CI**, and the reason has only narrowed, not gone.
+On 2026-09-01 local passed at 88.1% (mutmut 3.6.0 + pytest 8.3.4) while CI aborted before
+trying a mutant on the pinned 3.7.0 + 9.1.1. The version skew is closed — a venv from
+`requirements-mutation.txt` on 3.14 is now the same interpreter and the same pins as the
+runner — so reproduce in one and read the number; what is left to distrust is anything
+installed outside it.
 
 Two ways it aborts, both paid for. **A test importing from `scripts/` or reading outside
 `council/`** needs an `--ignore` line: mutmut copies neither, collection dies, and the gate
@@ -204,9 +230,12 @@ never by patching `logging.getLogger` — `obs.logging` *is* the stdlib module.
 - **ZDR per request, fail-closed** — the provider block in `config.py`, sent on every payload:
   `{"zdr": true, "data_collection": "deny", "allow_fallbacks": false}`. It used to live only in
   comments and an account toggle that was off.
-- **`--env` is an allow-list**, not a loader: resolved path, regular file under 64KB, and only
-  four permitted keys. Anything else was *environment injection* on a tool whose arguments an
-  LLM assembles.
+- **`--env` is an allow-list**, not a loader: resolved path, regular file under 64KB, and
+  exactly **one** permitted key — `OPENROUTER_API_KEY`. Anything else was *environment
+  injection* on a tool whose arguments an LLM assembles. It said *"four permitted keys"* here
+  until 2026-09-04, four commits after the three Langfuse variables were deleted in #38 for
+  being read by no line at all: the same drift this file's own header warns about, in the file
+  that warns about it.
 - **Anti-injection fences carry a per-run nonce** (`secrets.token_hex(8)`); fixed markers in a
   public repo let a voter close its own block. Stage 3 rankings are fenced too.
 - `SECURITY.md` maps OWASP Top 10 for LLM **2025** (the IDs are not interchangeable with 2023),

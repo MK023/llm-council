@@ -25,7 +25,8 @@ PYPI_JSON = "https://pypi.org/pypi/{name}/{version}/json"
 def wanted(filename: str) -> bool:
     """True for the artifacts this project is willing to install.
 
-    CI runs ubuntu x86_64; the macOS wheels are what Marco installs locally.
+    CI runs ubuntu x86_64, and so does the development machine since 2026-09-04.
+    The macOS wheels stay in the filter for a second environment.
     Everything else (musllinux, windows, other arches) is deliberately out — an
     unused hash is noise, and noise is what makes a lockfile stop being read.
 
