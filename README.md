@@ -203,13 +203,13 @@ CodeQL · SonarQube Cloud · Workflow lint (zizmor)
 Secret scan (gitleaks) · Dependency review
 ```
 
-The last two versions arrived on **2026-09-04** with the matrix that produces them. A required
-check is named, not matched by pattern, so widening the matrix without editing the ruleset
-would have added two jobs that run and do not block — the exact failure this section describes
-two paragraphs down. The ruleset was edited in the same change.
+**3.13 and 3.14** arrived on 2026-09-04 with the matrix that produces them, and the ruleset was
+edited in the same change: a required check is named, not matched by pattern, so widening the
+matrix alone would have added two jobs that run and do not block — the exact failure the next
+paragraph describes. Verified through the API after the edit, not assumed from having sent it.
 
-The last two were **added to the required list on 2026-08-14**, and until then this section
-claimed they blocked the merge while they only ran: they arrived with the supply-chain work of
+**Secret scan and dependency review** were added to the required list on **2026-08-14**, and
+until then this section claimed they blocked the merge while they only ran: they arrived with the supply-chain work of
 2026-08-13 and nobody added them to a ruleset last edited in July. A check that runs and does
 not block is a check whose red is a matter of opinion. Found by reading the ruleset through the
 API instead of trusting this paragraph — which is the only way that class of drift ever surfaces.

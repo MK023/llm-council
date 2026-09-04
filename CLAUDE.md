@@ -157,7 +157,16 @@ that, the version the code was written on was the one version nothing tested, an
 human is told to reproduce ran on a version that machine cannot install. The old notes are
 kept below only where the lesson outlived the hardware.
 
-## The mutation gate — runs locally, proves nothing locally
+**The supported-version list lives in FOUR places and nothing checks that they agree**:
+`ci.yml`'s matrix, `pyproject`'s classifiers, `sonar.python.version` in
+`sonar-project.properties`, and the **required checks of the `protect-main` ruleset**, which is
+not in the repository at all. The last two are the ones that bite. A required check is matched
+by NAME, so a wider matrix adds jobs that run and do not block until the ruleset is edited —
+and Sonar, a blocking gate, keeps analysing the semantics of whatever versions that one line
+says, so a 3.14-only finding falls outside the analysis with nothing turning red. Both were
+missed on 2026-09-04 and caught by a review, not by a gate. Widen the matrix, edit all four.
+
+## The mutation gate — now reproducible locally, and only inside the venv
 
 *"CI ONLY: libcst ships no wheel for Apple x86_64"* was wrong twice: it ran on the old 3.12.7,
 and on Linux the whole pinned set installs on 3.14. Measured 2026-09-04 in a throwaway venv:

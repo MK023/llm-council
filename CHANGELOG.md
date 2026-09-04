@@ -7,7 +7,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-### Changed — the machine moved, and four documents were describing the old one
+### Changed — the machine moved, and five documents were describing the old one
 
 The development machine became **Ubuntu 26.04 x86_64** on 2026-09-04, where `apt` offers a
 single interpreter: **3.14**. No `pyenv`, no bare `python`, no 3.12 to fall back to. Every
@@ -32,6 +32,12 @@ and two of them were instructions someone would follow.
   false on the old laptop; on Linux the whole pinned set installs on 3.14. The step stays — the
   survivor diffs are still the difference between writing an assertion and guessing at one, a
   week at a time — but on a reason that is true.
+- **`sonar-project.properties` pinned `sonar.python.version` to 3.10, 3.11, 3.12** — the matrix
+  written a second time, in another format, feeding a gate that *blocks*. Widening `ci.yml`
+  without it would have left SonarQube judging three versions out of five, with any 3.13- or
+  3.14-specific finding outside the analysis and nothing turning red to say so. Found by a
+  review of this change and not by a gate, which is why the file now says out loud that
+  whoever widens the matrix edits this line too.
 - Three more sentences said *local* meant macOS (`requirements-dev.txt`,
   `scripts/pin_dev_deps.py`, `tests/test_pin_dev_deps.py`), and `CLAUDE.md` pointed at
   `~/GitHub/agentic-os/CLAUDE.md`, a path that no longer exists. The macOS wheels stay in the
