@@ -12,7 +12,10 @@
 # Install with (the flag is the gate — without it the hashes are decoration):
 #   pip install --require-hashes -r requirements-dev.txt
 #
-# Wheels covered: py3-none-any, linux x86_64 (CI), macOS arm64 + x86_64 (local).
+# Wheels covered: py3-none-any, manylinux x86_64 (CI and, since 2026-09-04, the
+# development machine too — Ubuntu 26.04), macOS arm64 + x86_64. The macOS hashes
+# are kept although nothing installs from them today: dropping them is a one-line
+# regeneration, and re-adding them is a lockfile that fails on the first Mac.
 # None of the three has a runtime dependency of its own, so this list is complete.
 
 ruff==0.15.9 \

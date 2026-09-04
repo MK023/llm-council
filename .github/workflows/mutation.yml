@@ -60,10 +60,19 @@ jobs:
         with:
           persist-credentials: false
 
+      # 3.14 since 2026-09-04, and the reason is reproducibility rather than novelty.
+      # CLAUDE.md's standing instruction for this gate is "reproduce CI faithfully in a
+      # throwaway venv" — after a green local run at 88.1% failed to predict a CI abort
+      # on 2026-09-01. That instruction became impossible when the development machine
+      # moved to Ubuntu 26.04, whose only apt-installable interpreter is 3.14: the
+      # version a human can actually run and the version the gate runs on had drifted
+      # apart, which is exactly the drift that cost two wrong fixes. Measured on 3.14
+      # with the pinned mutmut 3.7.0 + pytest 9.1.1 before the change: 697 mutants,
+      # 614 killed, 88.1% against the floor of 85.
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install mutation tools
         run: pip install --require-hashes -r requirements-mutation.txt
@@ -94,12 +103,15 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # The names alone say WHERE a mutant lives, never WHAT it changed — and the
-      # name is all a reader gets, because mutmut cannot run on an Apple x86_64
-      # (libcst ships no wheel), so nobody can ask it locally. Without the diff the
-      # only way to write the assertion that kills a survivor is to guess which of
-      # the ~20 mutations of that function this one is. The evidence costs seconds
-      # here and saves a dispatch cycle per guess.
+      # The names alone say WHERE a mutant lives, never WHAT it changed. The reason
+      # given here used to be *"mutmut cannot run on an Apple x86_64 (libcst ships no
+      # wheel), so nobody can ask it locally"* — false twice over: it was already
+      # false on that laptop under 3.12.7, and the machine is Ubuntu 26.04 x86_64
+      # since 2026-09-04, where the whole pinned set installs on 3.14. The step stays
+      # because the reason survives the correction: without the diff, the only way to
+      # write the assertion that kills a survivor is to guess which of the ~20
+      # mutations of that function this one is, and a scheduled job is a week away
+      # from being asked again. The evidence costs seconds here and saves that week.
       - name: The surviving diffs, not just their names
         if: always()
         run: |

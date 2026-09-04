@@ -21,7 +21,7 @@ from scripts.pin_dev_deps import wanted  # noqa: E402
 
 
 class TestWheelsWeMustPin(unittest.TestCase):
-    """CI runs ubuntu x86_64; Marco's laptop is macOS. Both have to install."""
+    """CI and the development machine both run ubuntu x86_64; macOS is the second env."""
 
     def test_manylinux_2_28(self) -> None:
         self.assertTrue(wanted("zizmor-1.25.0-py3-none-manylinux_2_28_x86_64.whl"))
