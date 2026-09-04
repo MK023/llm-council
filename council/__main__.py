@@ -18,6 +18,8 @@ from council.stages import (
     StageResult,
     _collect_failures,
     _is_truncated,
+    ranking_status,
+    response_status,
     stage1_responses,
     stage2_rankings,
     stage3_synthesis,
@@ -174,9 +176,7 @@ def _report_stage1(s1: list[StageResult], trace: TraceContext) -> int:
             finish_reason=s.result.finish_reason,
             error=s.error,
         )
-        # TRUNCATED is not a cosmetic label: a cut answer reads as a complete one, and
-        # the whole point of naming it is that nobody has to notice the missing ending.
-        status = "FAILED" if s.error else ("TRUNCATED" if _is_truncated(s.result) else "OK")
+        status = response_status(s)
         print(f"\n--- Response {chr(65 + i)} [{status}] ({s.model}) ---")
         print(f"ERROR: {s.error}" if s.error else s.result.content)
         # `gen=` is on the SUCCESS line on purpose: a degraded answer — a mangled token,
@@ -192,19 +192,12 @@ def _report_stage1(s1: list[StageResult], trace: TraceContext) -> int:
     return consumed
 
 
-def _rank_status(r: RankingResult) -> str:
-    """FAILED = the API call failed; MALFORMED = it answered but the rank did not parse."""
-    if r.error and "regex_no_match" not in r.error:
-        return "FAILED"
-    return "OK" if r.is_valid else "MALFORMED"
-
-
 def _report_stage2(s2: list[RankingResult], trace: TraceContext) -> int:
     """Prints Stage 2 and emits its telemetry. Returns the tokens consumed."""
     consumed = 0
     for i, r in enumerate(s2):
         consumed += r.result.tokens
-        status = _rank_status(r)
+        status = ranking_status(r)
         emit(
             "stage2_ranking",
             trace,

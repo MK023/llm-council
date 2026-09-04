@@ -7,6 +7,76 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed — 100% di coverage, e nove difetti che nessuna asserzione guardava
+
+`__main__.py` e' escluso dal gate di mutation con una condizione scritta accanto
+all'esclusione — *"difendibile solo finche' quel file e' ONLY presentation"* — e con
+un'istruzione per quando smette di valere: **"if it happens again, move the code — do not
+widen the exclusion"**. Era gia' successo il 2026-08-14, ed e' successo di nuovo. Questa volta
+si e' visto solo perche' qualcuno e' andato a mutare quel file a mano: **quattro mutazioni
+sopravvissute su `_rank_status`, con la coverage del file al 100% di righe E branch.**
+
+- **Il discriminante `regex_no_match` era scritto in quattro posti, e il quarto non era
+  sorvegliato.** Chi lo scrive e chi lo legge sono legati dal CONTENUTO di un campo, non da
+  una chiamata: `graphify path` fra le due funzioni non trovava alcun percorso. Ora la
+  stringa esiste una volta sola, e `ranking_status` vive in `stages.py` dove i mutanti la
+  provano. Il suo ritorno non e' un'etichetta: `_report_stage2` ci decide sopra se l'utente
+  vede la risposta del votante o il messaggio d'errore.
+- **Il testo del provider poteva decidere la classificazione.** `client._request` incorpora
+  fino a 500 caratteri del corpo di risposta nel messaggio d'errore, e il marcatore veniva
+  cercato con `in`: un HTTP 403 il cui corpo contenesse quella parola veniva riportato come
+  MALFORMED e finiva nella lista sbagliata — l'ERROR SUMMARY mandava a rafforzare un prompt
+  per una chiamata rifiutata. Riprodotto e chiuso passando a `startswith`, che distingue i
+  nostri messaggi (cominciano col marcatore) da quelli del provider (cominciano con
+  `Non-retryable HTTP`). Segnalato da una security review del cambiamento.
+- **I rami di stampa di entrambi gli stage non erano asseriti.** Invertirli — mostrare il
+  segnaposto al posto dell'errore, o `ERROR: None` al posto della risposta pagata — lasciava
+  la suite verde.
+- **Il tetto dei token non aveva un test sul valore esatto.** Il caso esistente spendeva tre
+  volte il tetto, quindi passava identico con `>` e con `>=`; il valore ESATTO e' l'unico
+  punto in cui i due si distinguono, e un tetto che aborta quando viene raggiunto butta via
+  una run per un token che era nel budget.
+- **La classificazione di Stage 1 era rimasta indietro.** La prima stesura di questo
+  cambiamento ha spostato uno dei due classificatori e lasciato il gemello nello stesso file
+  escluso — *"una regola applicata a un seggio su quattro e' applicata da nessuna parte"*,
+  gia' scritto in questo repo il 2026-08-14 a proposito della deny-list dei reasoning model.
+  Trovato da una revisione avversaria. Spostandolo sono emersi subito due sopravvissuti in
+  piu' (`"OK"` riscritto in `"ok"` e `"XXOKXX"`), uccisi invece di negoziare il pavimento.
+
+### Added — due gate per una regola che finora solo un umano poteva controllare
+
+Il repo aveva gia' registrato questa forma di difetto con parole sue: *"A rule that only a
+human can check is a rule that is already broken somewhere"*. La regola si puo' rompere da
+due lati, e questi gate ne coprivano uno solo — quello sbagliato, come ha fatto notare la
+revisione:
+
+- `test_only_the_presentation_module_is_exempt_from_mutation` fallisce se qualcuno **allarga**
+  la lista `do_not_mutate`.
+- `test_the_exempt_module_classifies_nothing` legge `__main__.py` con `ast` e fallisce se una
+  sua funzione **restituisce un letterale stringa**, cioe' se della classificazione rientra
+  nel file escluso a lista intatta. **E' da questo lato che la regola si e' rotta entrambe le
+  volte.** Letto con `ast` e non con una grep, perche' una grep su `return "` non vede un
+  ritorno spezzato su piu' righe dal formatter — lo stesso aggiramento gia' pagato una volta
+  dal gate sui writer a stderr.
+- `test_the_string_appears_once_in_the_package` conta la sottostringa nuda in `council/` e
+  `scripts/`. Contava il token fra virgolette, e una copia annidata in un messaggio — la
+  forma che avevano tutte e quattro le copie originali — sarebbe stata contata zero.
+
+### Fixed — tredici test in una zona morta
+
+In `tests/test_stages.py` il blocco `if __name__ == "__main__"` stava a meta' file: eseguendo
+il file direttamente giravano **42 test invece di 55**, e le tredici classi sotto quel blocco
+non venivano mai raggiunte. Il difetto e' precedente, ma questo cambiamento ci aveva aggiunto
+sei nuovi test scritti apposta per uccidere dei mutanti — chi avesse lanciato il file per
+controllarli avrebbe letto un `OK` che non li aveva eseguiti. Nessun altro file di test ha la
+stessa disposizione.
+
+Mutation score **88,4%** (625 uccisi su 707) contro il pavimento di 85, coverage 100% righe e
+branch. I tre sopravvissuti rimasti in `_collect_failures` sono **equivalenti** — mutano il
+ramo destro di un `or` che la comprehension rende irraggiungibile — e sono tabulati in testa a
+`tests/test_stages.py` sul modello di quelli gia' documentati in `test_observability.py`.
+
+
 ### Changed — the machine moved, and five documents were describing the old one
 
 The development machine became **Ubuntu 26.04 x86_64** on 2026-09-04, where `apt` offers a
