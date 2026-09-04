@@ -85,6 +85,8 @@ python -m coverage run -m unittest discover tests/ && python -m coverage report
 python -m coverage report --include="council/client.py,council/config.py,council/stages.py" --fail-under=90
 ruff check council/ tests/ scripts/ && ruff format --check council/ tests/ scripts/
 zizmor .github/workflows/
+python scripts/healthchecks.py --self-check && python scripts/prova_healthchecks.py   # i due gate del dead man's switch
+doppler run -p llm-council -c prd -- python scripts/healthchecks.py --apply           # crea/aggiorna i check: MAI in CI
 mutmut run && mutmut export-cicd-stats && python scripts/mutation_gate.py mutants/mutmut-cicd-stats.json 85   # in un venv da requirements-mutation.txt, 3.14: vedi sotto
 python scripts/pin_dev_deps.py                             # never hand-edit the -dev/-mutation lockfiles
 ```
@@ -210,6 +212,33 @@ pytest's plugin then attaches ITS handlers directly (measured: `_LiveLoggingNull
 one, and mutmut aborts. Isolate a logger with `_pristine_logger` from `test_observability.py`,
 never by patching `logging.getLogger` — `obs.logging` *is* the stdlib module.
 
+## What watches the cron jobs
+
+Since 2026-09-04 both scheduled workflows send a heartbeat to **healthchecks.io**
+(`.github/workflows/healthchecks.yml`, one `workflow_run` watcher filtered to
+`workflow_run.event == 'schedule'`). It is the only control here that lives **outside**
+GitHub, and it exists for the case no red run can show: GitHub disables schedules after 60
+days of repository inactivity, silently, and this repo works in sprints.
+
+- **It replaced a guard that was not running.** The Sentry cron monitor `llm-council-e2e`
+  was `disabled` and had never received a check-in — free plan, one active monitor per
+  account, seat held by another project — while the step printed `check-in Sentry: ok`.
+  Those 52 lines are gone. `mutation.yml` had no guard of any kind, from Sentry or from the
+  external sentinel in the site repo, whose list of five slugs does not include it.
+- **Windows come from the MEASURED gap between consecutive scheduled runs**, never from the
+  cron expression: `e2e` max 174.0h over 6 samples, `mutation` 178.1h over 4, read from the
+  GitHub API on 2026-09-04. An alarm sized on the cron fires on a normal GitHub delay, and
+  a monitor people learn to ignore is not a monitor.
+- **The ping key is in GitHub secrets; the API key is only in Doppler.** No CI step calls
+  `--apply`, deliberately: the CI these checks watch must not be able to reconfigure them.
+- **One healthchecks.io project per repository.** Slugs are unique within a project and
+  `mutation` already exists in agentic-os — a shared project would answer `409 ambiguous
+  slug`, which the watcher turns into a `::warning::` and a green job.
+- `scripts/healthchecks.py --self-check` and `scripts/prova_healthchecks.py` both run in
+  `ci.yml`. The second one is the bench of the first, and it earned its place immediately:
+  the self-check matched `uses:` but not `- uses:`, so it guarded the reusable-workflow
+  door and left the step door open.
+
 ## Observability — the half that does not live in this repo
 
 - **Nothing here sends a trace to Langfuse.** `observability.py` writes JSON to stderr and
@@ -228,7 +257,10 @@ never by patching `logging.getLogger` — `obs.logging` *is* the stdlib module.
 - **Costs are there; unit prices are not.** `totalCost` is populated (OpenRouter sends the
   real figure); `totalPrice` is null — no Langfuse price sheet for these models. Reading the
   wrong one says "Langfuse does not track cost", which is false.
-- **The Sentry cron monitor `llm-council-e2e` is `disabled` and has never checked in.** Free
+- **Sentry crons are gone from this repo since 2026-09-04** — the step and its secret were
+  removed and healthchecks.io took over (see *What watches the cron jobs*). The paragraph
+  below is kept because its lesson outlived the guard, and because the external sentinel it
+  describes is still running. **The monitor `llm-council-e2e` was `disabled` and had never checked in.** Free
   plan, one active monitor per account, seat held by `supabase-keepalive`. The long comment in
   `e2e.yml` therefore describes a guard that is **not running** — but *"nobody would notice a
   missed run"*, written here on 2026-08-31, was **false and is corrected**: since 2026-08-14

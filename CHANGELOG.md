@@ -7,6 +7,59 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added — un dead man's switch che gira davvero, e il primo per `mutation.yml`
+
+I due cron di questo repository mandano un battito a **healthchecks.io**
+(`.github/workflows/healthchecks.yml`, un solo watcher `workflow_run` filtrato su
+`workflow_run.event == 'schedule'`). E' l'unico controllo che vive **fuori** da GitHub, e
+chiude il caso che nessun rosso puo' mostrare: GitHub disabilita gli schedule dopo 60
+giorni di inattivita' del repository, in silenzio, e qui si lavora a sprint.
+
+- **`e2e.yml` spediva un check-in a un cron monitor Sentry che era `disabled` e non aveva
+  mai ricevuto un battito.** Piano gratuito, un monitor attivo per account, posto occupato
+  da un altro progetto. Lo step spediva, Sentry buttava, e il log stampava
+  `check-in Sentry: ok`: una lampada collegata a niente, lo stesso difetto gia' pagato con
+  `langfuse_opt_in`. Le sue 52 righe sono state rimosse — due guardiani sullo stesso cron,
+  di cui uno morto, sono peggio di uno solo.
+- **`mutation.yml` non era sorvegliato da niente**, ne' da Sentry ne' dalla sentinella
+  esterna nel repo del sito, che elenca cinque slug e non lo contiene. E' un gate
+  settimanale bloccante che poteva smettere di girare senza che nessuno se ne accorgesse.
+- **Le finestre vengono dal divario MISURATO fra due run schedulate, mai dall'espressione
+  cron.** Letti dall'API di GitHub il 2026-09-04: `e2e` massimo 174,0h su 6 campioni,
+  `mutation` 178,1h su 4. Da qui `7 giorni + 24h` e `7 giorni + 36h` — dodici ore in piu'
+  per mutation perche' quattro campioni sono pochi per fidarsi di un massimo e quel cron
+  gira alle 03:00 UTC, quando la coda dei runner e' meno prevedibile. Un allarme tarato
+  sul cron suonerebbe su un ritardo normale di GitHub, e si imparerebbe a ignorarlo.
+- **Un progetto healthchecks.io per repository.** Gli slug sono unici dentro un progetto e
+  `mutation` esiste gia' in agentic-os: con un progetto condiviso il ping avrebbe avuto in
+  risposta `409 slug ambiguo`, che il watcher trasforma in un `::warning::` lasciando il
+  job verde.
+- **Due chiavi, due poteri.** La *ping key* sa solo dire "sono vivo" e sta nei secret di
+  GitHub; la *API key* puo' allungare un `grace` fino a rendere cieco l'allarme e sta SOLO
+  in Doppler. Nessuno step di CI chiama `--apply`: la CI sorvegliata da questi check non
+  deve poterli riconfigurare.
+- **`scripts/healthchecks.py` e' stdlib-only**, a differenza della versione di agentic-os
+  da cui discende, che usa PyYAML. I workflow si leggono come testo perche'
+  `pin_dev_deps.py` dichiara *"stdlib-only, like the package it serves"* e un gate che gira
+  solo dopo un `pip install` e' un gate che qualcuno salta.
+
+### Added — il banco del self-check, che ha trovato un buco al primo giro
+
+`scripts/prova_healthchecks.py`: undici casi su una copia usa-e-getta dei workflow rotta
+apposta, piu' **due mutazioni di controllo** che pretendono il verde quando il controllo e'
+spento — un caso che resta rosso anche senza il controllo che dovrebbe esercitarlo sta
+misurando qualcos'altro.
+
+Il caso piu' importante e' la condizione NEUTRALIZZATA: `always() || <il filtro>` contiene
+la condizione attesa e non filtra niente, quindi un self-check che cercasse la sottostringa
+la accetterebbe e il monitor direbbe "vivo" per un cron che non parte piu' da solo.
+
+Il banco ha fatto il suo lavoro subito: il self-check cercava `uses:` e non `- uses:`,
+cioe' vedeva la porta della reusable workflow e **non quella degli step** — il primo passo
+esatto dell'exploit `workflow_run` che la soppressione zizmor dichiara impossibile li'
+dentro. Undici casi su undici dopo la correzione.
+
+
 ### Fixed — 100% di coverage, e nove difetti che nessuna asserzione guardava
 
 `__main__.py` e' escluso dal gate di mutation con una condizione scritta accanto
