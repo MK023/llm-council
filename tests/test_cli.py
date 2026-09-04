@@ -185,6 +185,61 @@ class TestExitContract(unittest.TestCase):
         self.assertEqual(code, 4)
         self.assertIn("ABORT", err)
 
+    def _stage1_totalling(self, total: int) -> list[StageResult]:
+        """Tre votanti la cui somma di token e' ESATTAMENTE `total`."""
+        each, remainder = divmod(total, len(VOTER_MODELS))
+        counts = [each] * len(VOTER_MODELS)
+        counts[-1] += remainder
+        return [
+            StageResult(model=m, result=_ok(tokens=n))
+            for m, n in zip(VOTER_MODELS, counts, strict=True)
+        ]
+
+    def _rankings_costing_nothing(self) -> list[RankingResult]:
+        return [
+            RankingResult(
+                voter=m,
+                result=_ok("RANK: A,B,C", tokens=0),
+                rank=("A", "B", "C"),
+                reason="perche' si",
+                is_valid=True,
+                error=None,
+            )
+            for m in VOTER_MODELS
+        ]
+
+    def test_the_ceiling_itself_is_not_over_the_ceiling(self) -> None:
+        """Il tetto e' un massimo consentito, non il primo valore vietato.
+
+        Il test qui sopra spende tre volte il tetto: passa identico che il confronto sia
+        `>` o `>=`, e infatti mutare l'uno nell'altro il 2026-09-04 lasciava la suite
+        verde. Il valore ESATTO e' l'unico punto in cui i due si comportano in modo
+        diverso, quindi e' l'unico che li distingue. Un tetto che aborta quando viene
+        raggiunto butta via una run completa per un token che era nel budget.
+        """
+        code, _, _ = _run(
+            ["domanda"],
+            stage1_responses=self._stage1_totalling(MAX_TOTAL_TOKENS_PER_RUN),
+            # Il tetto e' controllato DUE volte e la seconda somma anche Stage 2: con i
+            # 300 token di default il totale sarebbe 50.300 e l'abort direbbe il vero.
+            # A zero, il numero sotto esame e' esattamente quello di Stage 1.
+            stage2_rankings=self._rankings_costing_nothing(),
+        )
+        # `assertNotEqual(code, 4)` sarebbe verde anche per 1 o 3: proverebbe il punto sul
+        # confronto e lascerebbe passare una run degradata o fallita. Qui non c'e' nulla di
+        # troncato e nessun guasto, quindi il contratto e' lo zero pieno.
+        self.assertEqual(code, 0)
+
+    def test_one_token_over_the_ceiling_aborts(self) -> None:
+        """L'altra meta' della pinza: a +1 deve abortire."""
+        code, _, err = _run(
+            ["domanda"],
+            stage1_responses=self._stage1_totalling(MAX_TOTAL_TOKENS_PER_RUN + 1),
+            stage2_rankings=self._rankings_costing_nothing(),
+        )
+        self.assertEqual(code, 4)
+        self.assertIn("ABORT", err)
+
 
 class TestTheReportCarriesTheLookupKey(unittest.TestCase):
     """A degraded answer looks like a good one, so the id must ride on the good line.
@@ -297,6 +352,80 @@ class TestTruncationIsNotSuccess(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("[TRUNCATED]", out)
         self.assertIn("s1_truncated=0/3", out)
+
+
+class TestTheReportShowsTheRightHalfOfEachVoter(unittest.TestCase):
+    """Un votante caduto mostra il suo errore; uno riuscito mostra la sua risposta.
+
+    Il report e' l'unica cosa che un umano legge di una run, e la scelta fra le due meta'
+    e' un `if` per stage. Nessuno dei due era asserito: invertirli entrambi il 2026-09-04
+    lasciava la suite verde, con la coverage di `__main__.py` al 100% di righe E branch —
+    i due rami venivano eseguiti, e nessuno guardava cosa stampavano.
+
+    Le conseguenze non sono cosmetiche. Un votante caduto che stampa `[VOTER_FAILED]`
+    invece dell'errore nasconde il motivo per cui e' caduto, che e' l'unica informazione
+    che quella riga esiste per dare; e un votante riuscito che stampa `ERROR: None` al
+    posto della risposta butta via il lavoro pagato.
+    """
+
+    def setUp(self) -> None:
+        self.env = patch.dict(os.environ, {"OPENROUTER_API_KEY": _KEY}, clear=False)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_stage1_shows_the_error_of_the_voter_that_fell(self) -> None:
+        _, out, _ = _run(
+            ["domanda"], stage1_responses=_stage1(errors=(None, "429 exhausted", None))
+        )
+        self.assertIn("ERROR: 429 exhausted", out)
+        # `assertIn("429 exhausted")` da solo passava anche con il ramo invertito: il
+        # messaggio ricompare nell'ERROR SUMMARY in fondo alla run, quindi l'asserzione
+        # era verde per una ragione che non c'entrava con la riga sotto esame. Cio' che
+        # distingue i due rami e' il segnaposto: se stampa quello, non ha stampato l'errore.
+        self.assertNotIn("[VOTER_FAILED]", out)
+
+    def test_stage1_shows_the_answer_of_the_voter_that_worked(self) -> None:
+        client_said = "la risposta che il modello ha davvero prodotto"
+        s1 = [StageResult(model=m, result=_ok(client_said)) for m in VOTER_MODELS]
+        _, out, _ = _run(["domanda"], stage1_responses=s1)
+        self.assertIn(client_said, out)
+        self.assertNotIn("ERROR:", out)
+
+    def test_stage2_shows_the_error_of_the_ranking_that_failed(self) -> None:
+        s2 = [
+            RankingResult(
+                voter=m,
+                result=_ok("[RANK_FAILED]"),
+                rank=None,
+                reason="",
+                is_valid=False,
+                error="503 service unavailable",
+            )
+            for m in VOTER_MODELS
+        ]
+        _, out, _ = _run(["domanda"], stage2_rankings=s2)
+        self.assertIn("ERROR: 503 service unavailable", out)
+        self.assertNotIn("[RANK_FAILED]", out)
+
+    def test_stage2_shows_the_output_of_the_ranking_that_could_not_be_parsed(self) -> None:
+        """MALFORMED non e' FAILED: il modello ha risposto, e cio' che ha scritto e'
+        l'unica traccia del perche' il rank non si sia fatto leggere. Stamparlo come se
+        fosse un errore la butterebbe via."""
+        said = "ho classificato le risposte in ordine di qualita"
+        s2 = [
+            RankingResult(
+                voter=m,
+                result=_ok(said),
+                rank=None,
+                reason="",
+                is_valid=False,
+                error="regex_no_match (Stage 2 output did not match RANK regex)",
+            )
+            for m in VOTER_MODELS
+        ]
+        _, out, _ = _run(["domanda"], stage2_rankings=s2)
+        self.assertIn(said, out)
+        self.assertIn("[MALFORMED]", out)
 
 
 class TestArgParsing(unittest.TestCase):

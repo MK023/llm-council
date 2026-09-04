@@ -112,6 +112,13 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
 - **The mutation floor moves only after a measurement**, and stays *below* the current score: a
   floor equal to the score turns the next unlucky mutant into a red build. It opened at 55 on
   2026-08-13 and is now **85** — `MUTATION_FLOOR` in `mutation.yml`, declared in one place.
+- **Nothing in `__main__.py` may return a string literal**, and a test reads it with `ast` to
+  say so (`test_the_exempt_module_classifies_nothing`). That file is outside the mutation
+  gate, so a function returning a constant string there is a classification nobody mutates —
+  which is how `_rank_status` survived four hand-run mutations at 100% branch coverage on
+  2026-09-04, and `_is_truncated`/`_collect_failures` before it on 2026-08-14. Both times the
+  fix was to move the classifier into `stages.py`, where it sits beside `response_status` and
+  `ranking_status`.
 
 ## Gotchas paid for
 
@@ -128,6 +135,21 @@ Dev dependencies are **hash-pinned** and generated from the PyPI API, never writ
   the gate was needed. The assertions checked that a line *ran*, not what it *produced*.
   (Over *all* of `council/` the same day it was 47.5%, ~70% of those survivors being string
   rewrites in the printing layer — which is why `__main__.py` is excluded from mutation.)
+- **A marker matched with `in` is a marker the other side can write.** `client._request`
+  embeds up to 500 bytes of the provider's response body in the error message, and
+  `stage2_rankings` stores it verbatim — so while the `regex_no_match` discriminator was a
+  substring test, a 403 whose body happened to contain that word was reported as MALFORMED
+  and filed under the wrong list. Ours start with the marker, theirs start with
+  `Non-retryable HTTP`: the head distinguishes them, the middle does not. Found by a security
+  review on 2026-09-04, reproduced before it was believed.
+- **`mutmut` caches on the mutated SOURCE, not on the tests.** A test written to kill a
+  survivor reads the old verdict until `mutants/` is deleted — measured 2026-09-04, two runs
+  in a row reporting a mutant alive that a new assertion was killing. Same shape as stale
+  `.pyc`: `cp`/`git checkout` can restore a file with an mtime that collides with bytecode
+  built while it was mutated, and Python serves the old one. **Run manual mutation with
+  `python -B`, and `rm -rf mutants/` before re-measuring.** Three measurements in one session
+  were false before this was noticed; the tell was an output that contradicted itself, a
+  status `[OK]` printed next to `ERROR: None`.
 - **Aggregating a tool's output by symbolic name: check the groups sum to the total.** mutmut
   names class-method mutants with a different separator (`council.client.xǁOpenRouterClientǁcall`),
   so aggregating on the free-function pattern reported `client.py` as the most solid module when

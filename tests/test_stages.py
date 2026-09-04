@@ -4,6 +4,20 @@ The client had 93% coverage and the protocol 40%: the easy-to-mock layer was
 tested, the layer that makes this project what it is was not. These cover the
 behaviours that matter — graceful degradation, blind-ranking parsing, chairman
 selection — plus one privacy invariant: telemetry must never carry content.
+
+MUTANTI EQUIVALENTI in `_collect_failures`, misurati 2026-09-04 — nessuna asserzione
+puo' ucciderli, e sono elencati qui perche' un sopravvissuto senza spiegazione viene
+riletto come un buco ogni volta che qualcuno guarda il report:
+
+    __mutmut_5    `s.error or ""`  ->  `s.error and ""`
+    __mutmut_6    `s.error or ""`  ->  `s.error or "XXXX"`
+    __mutmut_21   `r.error or ""`  ->  `r.error or "XXXX"`
+
+Tutti e tre mutano il ramo destro di un `or` che non viene mai preso: la comprehension
+filtra gia' su `if s.error` / `if r.error`, quindi a quel punto il valore e' vero per
+costruzione e il fallback e' irraggiungibile. Il quarto sopravvissuto della stessa
+funzione, `chr(65 - i)` sulla lista dei malformati, NON era equivalente ed e' stato
+ucciso: vedi `test_a_malformed_ranking_keeps_its_position`.
 """
 
 from __future__ import annotations
@@ -11,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from council.client import CallResult, OpenRouterError
@@ -28,10 +43,16 @@ from council.stages import (
     StageResult,
     _build_metadata,
     _collect_failures,
+    ranking_status,
+    response_status,
     stage1_responses,
     stage2_rankings,
     stage3_synthesis,
 )
+
+# `council/` viene copiato da mutmut dentro `mutants/`, quindi questo path esiste anche
+# nell'albero mutato: il gate qui sotto non ha bisogno di una riga `--ignore` in pyproject.
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _result(content: str) -> CallResult:
@@ -432,8 +453,193 @@ class TestWhatEachStageActuallyAsks(unittest.TestCase):
         self.assertIn("domanda-unica", client.call.call_args.args[1][0]["content"])
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TestProviderTextCannotForgeTheDiscriminator(unittest.TestCase):
+    """Il testo del provider entra nel messaggio d'errore, quindi non puo' decidere la
+    classificazione.
+
+    `client._request` incorpora fino a 500 caratteri del CORPO DI RISPOSTA nel messaggio di
+    un `OpenRouterError` non ritentabile, e `stage2_rankings` lo conserva verbatim nel campo
+    `error`. Finche' il marcatore veniva cercato con `in`, un corpo che lo contenesse in un
+    punto qualsiasi bastava a far passare un guasto di rete per un problema di parsing:
+    riprodotto il 2026-09-04, un HTTP 403 finiva in `stage2_malformed` invece che in
+    `stage2_failed`.
+
+    Non e' un dettaglio di etichette: l'ERROR SUMMARY dice a chi legge cosa andare a
+    sistemare, e MALFORMED lo manda a rafforzare un prompt quando la chiamata era stata
+    rifiutata. E' la stessa famiglia dell'etichetta che accusava il votante sbagliato — un
+    report che indica la cosa sbagliata costa una misura inutile, e questo progetto ha gia'
+    cambiato due volte un votante su una diagnosi falsa.
+    """
+
+    def _http_failure(self, body: str) -> RankingResult:
+        """La forma esatta che `client._request` produce su un codice non ritentabile."""
+        return RankingResult(
+            voter=VOTER_MODELS[0],
+            result=_FAILED_RESULT,
+            rank=None,
+            reason="",
+            is_valid=False,
+            error=f"Non-retryable HTTP 403 for '{VOTER_MODELS[0]}': {body}",
+        )
+
+    def test_a_provider_body_naming_the_marker_is_still_a_FAILED(self) -> None:
+        forgiato = self._http_failure('{"error":"blocked by regex_no_match filter"}')
+        self.assertEqual(ranking_status(forgiato), "FAILED")
+
+    def test_a_forged_body_lands_in_the_failed_list_not_the_malformed_one(self) -> None:
+        forgiato = self._http_failure('{"error":"blocked by regex_no_match filter"}')
+        _, s2_failed, s2_malformed, _ = _collect_failures(
+            [StageResult(model=m, result=_result("x")) for m in VOTER_MODELS], [forgiato]
+        )
+        self.assertEqual([label for label, _, _ in s2_failed], ["A"])
+        self.assertEqual(s2_malformed, [])
+
+
+class TestTheDiscriminatorLivesInExactlyOnePlace(unittest.TestCase):
+    """Il letterale `regex_no_match` e' un contratto fra due funzioni che non si chiamano.
+
+    `stage2_rankings` lo scrive dentro un messaggio d'errore e chi classifica ne cerca la
+    sottostringa: sono legate dal CONTENUTO di un campo, non da una chiamata, quindi nessuna
+    analisi delle dipendenze le vede insieme e nessun refactor guidato dalle chiamate le
+    tiene allineate. `graphify path` fra le due, il 2026-09-04, non trovava alcun percorso.
+
+    Finche' e' stato un letterale ripetuto ha fatto esattamente quello che ci si aspetta da
+    un contratto scritto in due posti: una quarta copia e' finita in `__main__.py`, fuori
+    dal gate di mutation, e ci e' rimasta per settimane. Ora la stringa esiste una volta
+    sola, e questo test e' cio' che impedisce alla quinta di comparire.
+    """
+
+    def test_the_string_appears_once_in_the_package(self) -> None:
+        """Conta la sottostringa NUDA, non il token fra virgolette.
+
+        La prima stesura contava `'"regex_no_match"'`, virgoletta comminciante e finale
+        comprese, e una revisione del 2026-09-04 ha fatto notare che una copia rientrata
+        dentro un messaggio — `error="regex_no_match (Stage 4 ...)"` — non ha una virgoletta
+        dopo `match` e sarebbe stata contata zero: il gate scritto per impedire la quinta
+        copia non avrebbe visto proprio la forma che le altre quattro avevano. Guarda anche
+        `scripts/`, dove `langfuse_check.py` legge cio' che il council scrive su stderr.
+
+        `rglob` e non `glob`: una quinta copia in una sottodirectory sarebbe invisibile a un
+        glob piatto. E il ramo su `scripts/` e' vivo solo fuori dal gate di mutation, perche'
+        li' `REPO_ROOT` e' l'albero `mutants/`, che `scripts/` non lo contiene affatto (il
+        motivo sta in pyproject.toml). Sulla CI normale vale per intero.
+        """
+        sorgenti = sorted(f for d in ("council", "scripts") for f in (REPO_ROOT / d).rglob("*.py"))
+        occorrenze = {
+            f.relative_to(REPO_ROOT).as_posix(): f.read_text(encoding="utf-8").count(
+                "regex_no_match"
+            )
+            for f in sorgenti
+        }
+        trovate = {name: n for name, n in occorrenze.items() if n}
+        self.assertEqual(
+            trovate,
+            {"council/stages.py": 1},
+            "il discriminante compare in piu' di un posto (o si e' spostato). Una seconda "
+            "copia puo' divergere dalla prima in silenzio, e se finisce in un file escluso "
+            "dal gate di mutation nessun mutante la mette alla prova.",
+        )
+
+
+class TestResponseStatusSaysWhichKindOfOutcome(unittest.TestCase):
+    """Il gemello dei test su `ranking_status`, per la classificazione di Stage 1.
+
+    La funzione e' arrivata qui dentro il 2026-09-04 da `__main__.py`, che il gate di
+    mutation non prova, e la prima misura dopo il trasloco ha trovato subito due
+    sopravvissuti: `"OK"` riscritto in `"XXOKXX"` e in `"ok"` non rompeva niente. Il test
+    che c'era guardava il CONTENUTO stampato per il votante riuscito, mai la sua etichetta —
+    e l'etichetta e' cio' che dice a chi legge se quella risposta e' intera.
+
+    Vale la regola gia' scritta nel repo: si uccidono i sopravvissuti, non si abbassa il
+    pavimento.
+    """
+
+    def _response(self, *, error: str | None = None, finish_reason: str = "stop") -> StageResult:
+        return StageResult(
+            model=VOTER_MODELS[0],
+            result=CallResult(
+                content="x",
+                cost=0.001,
+                tokens=100,
+                latency_s=1.0,
+                attempts=1,
+                finish_reason=finish_reason,
+            ),
+            error=error,
+        )
+
+    def test_a_failed_call_is_FAILED(self) -> None:
+        self.assertEqual(response_status(self._response(error="429 exhausted")), "FAILED")
+
+    def test_a_cut_answer_is_TRUNCATED(self) -> None:
+        self.assertEqual(response_status(self._response(finish_reason="length")), "TRUNCATED")
+
+    def test_a_complete_answer_is_exactly_OK(self) -> None:
+        """Esattamente `OK`: `"ok"` e `"XXOKXX"` sono i due mutanti sopravvissuti al primo
+        giro, e una maiuscola diversa e' comunque un'etichetta che nessun lettore riconosce
+        accanto a FAILED e TRUNCATED."""
+        self.assertEqual(response_status(self._response()), "OK")
+
+    def test_an_error_wins_over_a_truncation(self) -> None:
+        """Una chiamata caduta non ha una risposta da poter tagliare: l'ordine dei due rami
+        non e' arbitrario."""
+        caduta_e_tagliata = self._response(error="502 bad gateway", finish_reason="length")
+        self.assertEqual(response_status(caduta_e_tagliata), "FAILED")
+
+
+class TestRankingStatusSaysWhichKindOfFailure(unittest.TestCase):
+    """`ranking_status` decide l'etichetta di Stage 2 — e non solo l'etichetta.
+
+    `_report_stage2` legge il suo ritorno per scegliere SE stampare la risposta del
+    votante o il messaggio d'errore, quindi sbagliarla non produce una parola diversa:
+    produce un report che mostra la cosa sbagliata.
+
+    Viveva in `__main__.py`, fuori dal gate di mutation, e nessun test la interrogava.
+    Quattro mutazioni provate a mano il 2026-09-04 sono sopravvissute tutte con la
+    coverage di quel file al 100% di righe e branch: il discriminante invertito
+    (`not in` -> `in`), le due etichette scambiate fra loro, e il letterale corrotto.
+    Ognuno dei test qui sotto ne uccide una.
+    """
+
+    def _ranking(self, *, error: str | None, is_valid: bool) -> RankingResult:
+        return RankingResult(
+            voter=VOTER_MODELS[0],
+            result=_result("x"),
+            rank=("A", "B", "C") if is_valid else None,
+            reason="",
+            is_valid=is_valid,
+            error=error,
+        )
+
+    def test_an_api_failure_is_FAILED(self) -> None:
+        self.assertEqual(
+            ranking_status(self._ranking(error="429 exhausted", is_valid=False)), "FAILED"
+        )
+
+    def test_an_unparsable_rank_is_MALFORMED_not_FAILED(self) -> None:
+        """La distinzione che il discriminante esiste per fare: il modello HA risposto."""
+        unparsable = self._ranking(
+            error="regex_no_match (Stage 2 output did not match RANK regex)", is_valid=False
+        )
+        self.assertEqual(ranking_status(unparsable), "MALFORMED")
+
+    def test_a_valid_ranking_is_OK(self) -> None:
+        self.assertEqual(ranking_status(self._ranking(error=None, is_valid=True)), "OK")
+
+    def test_the_marker_written_by_stage2_is_the_one_read_here(self) -> None:
+        """Il contratto che nessuna analisi delle chiamate vede.
+
+        `stage2_rankings` scrive quel messaggio e `ranking_status` ne cerca dentro una
+        sottostringa: sono legati dal CONTENUTO di un campo, non da una chiamata. Finche'
+        il letterale era ripetuto, le due meta' potevano divergere in silenzio — questo
+        test le tiene insieme leggendo il messaggio che il codice produce davvero.
+        """
+        client = _client(_result("non e' un rank"), _result("neanche"), _result("nemmeno"))
+        produced = stage2_rankings(client, "domanda", [_stage_result("a")] * 3)
+        self.assertTrue(all(r.error for r in produced), "lo stage deve aver marcato l'errore")
+        for r in produced:
+            with self.subTest(voter=r.voter):
+                self.assertEqual(ranking_status(r), "MALFORMED")
 
 
 class TestTheLabelBlamesTheRightVoter(unittest.TestCase):
@@ -507,6 +713,21 @@ class TestTheLabelBlamesTheRightVoter(unittest.TestCase):
         _, _, _, truncated = _collect_failures(s1, self._rankings())
         self.assertEqual(truncated, [("C", VOTER_MODELS[2])])
 
+    def test_a_malformed_ranking_keeps_its_position(self) -> None:
+        """La QUARTA lista, l'unica rimasta senza il test sull'etichetta.
+
+        Il 2026-08-14 le altre tre furono pinnate perche' mutare `chr(65 + i)` lasciava la
+        suite verde; questa no, e il test qui sotto usa la posizione A — dove `65 - i` e
+        `65 + i` danno la stessa lettera e quindi non distinguono nulla. Il mutante
+        `chr(65 - i)` e' rimasto vivo fino al 2026-09-04. Serve una posizione diversa da
+        zero, ed e' per questo che il malformato qui e' il SECONDO votante.
+        """
+        _, _, s2_malformed, _ = _collect_failures(
+            self._stage1(None, None, None),
+            self._rankings(None, "regex_no_match (Stage 2 output did not match RANK regex)", None),
+        )
+        self.assertEqual(s2_malformed, [("B", VOTER_MODELS[1])])
+
     def test_malformed_and_failed_are_split_on_the_regex_marker(self) -> None:
         """The discriminator is the literal `regex_no_match`: it decides which list."""
         _, s2_failed, s2_malformed, _ = _collect_failures(
@@ -515,3 +736,7 @@ class TestTheLabelBlamesTheRightVoter(unittest.TestCase):
         )
         self.assertEqual([label for label, _ in s2_malformed], ["A"])
         self.assertEqual([label for label, _, _ in s2_failed], ["B"])
+
+
+if __name__ == "__main__":
+    unittest.main()

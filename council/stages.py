@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Final
 
 from council.client import CallResult, OpenRouterClient, OpenRouterError
 from council.config import (
@@ -19,6 +20,27 @@ from council.config import (
 )
 
 _RANK_PATTERN = re.compile(RANK_REGEX, re.IGNORECASE | re.DOTALL)
+
+# Il discriminante fra un ranking FALLITO e uno MALFORMATO, scritto una volta sola e
+# cercato in TESTA al messaggio, mai al suo interno.
+#
+# La differenza non e' stilistica. `client._request` incorpora fino a 500 caratteri del
+# CORPO DI RISPOSTA del provider dentro il messaggio di `OpenRouterError`, e
+# `stage2_rankings` lo salva verbatim: finche' il confronto era `in`, un HTTP 403 il cui
+# corpo contenesse da qualche parte la parola marcatore veniva classificato MALFORMED
+# invece che FAILED e finiva nella lista sbagliata. Riprodotto il 2026-09-04 su
+# segnalazione di una security review. I nostri messaggi COMINCIANO con il marcatore;
+# quelli del provider cominciano con "Non-retryable HTTP", quindi la testa distingue e
+# l'interno no.
+#
+# E' una sottostringa cercata dentro un messaggio d'errore, non un tipo: chi la scrive e
+# chi la legge sono legati dal CONTENUTO di un campo, non da una chiamata — un contratto
+# che nessuna analisi delle chiamate vede. Finche' e' stato un letterale ripetuto, le tre
+# copie in questo file erano sorvegliate dal gate di mutation e la QUARTA, in
+# `__main__.py`, non lo era: quattro mutazioni provate a mano su quella copia
+# (`not in` -> `in`, le due etichette scambiate, il letterale corrotto) sono sopravvissute
+# tutte, con la coverage del file al 100% di righe e branch.
+_REGEX_NO_MATCH: Final[str] = "regex_no_match"
 
 # User identifier, sent as the top-level `user` field of the OpenRouter body and read
 # from there by Langfuse. Single-user CLI tool, so the identifier is static.
@@ -169,7 +191,7 @@ def stage2_rankings(
                     rank=None,
                     reason="",
                     is_valid=False,
-                    error="regex_no_match (Stage 2 output did not match RANK regex)",
+                    error=f"{_REGEX_NO_MATCH} (Stage 2 output did not match RANK regex)",
                 )
             )
     return rankings
@@ -214,6 +236,52 @@ def _is_truncated(result: CallResult) -> bool:
     return result.finish_reason == "length"
 
 
+def response_status(s: StageResult) -> str:
+    """FAILED = la chiamata non ha prodotto una risposta; TRUNCATED = la risposta si
+    interrompe a meta'; OK = risposta completa.
+
+    Il gemello di `ranking_status`, e per un giorno e' rimasto indietro: il 2026-09-04 la
+    classificazione di Stage 2 e' stata spostata qui e questa no, benche' fosse la stessa
+    cosa nello stesso file escluso dal gate. Una regola applicata a uno dei due casi e'
+    applicata a nessuno — il repo lo aveva gia' scritto il 2026-08-14 a proposito della
+    deny-list dei reasoning model, che copriva il chairman e non i tre votanti.
+
+    TRUNCATED non e' un'etichetta cosmetica: una risposta tagliata si legge come una
+    completa, e nominarla e' l'unico motivo per cui qualcuno se ne accorge.
+    """
+    if s.error:
+        return "FAILED"
+    return "TRUNCATED" if _is_truncated(s.result) else "OK"
+
+
+def ranking_status(r: RankingResult) -> str:
+    """FAILED = la chiamata non ha prodotto un ranking; MALFORMED = ha risposto e il rank
+    non si e' fatto leggere; OK = ranking valido.
+
+    Vive qui e non in `__main__.py` per la ragione gia' scritta in `pyproject.toml` il
+    2026-08-14, quando `_is_truncated` e `_collect_failures` fecero questo stesso viaggio:
+    l'esclusione di `__main__.py` dal gate di mutation e' difendibile finche' quel file e'
+    SOLO presentazione, e una classificazione non lo e'. Il suo ritorno non e' un'etichetta
+    da stampare — `_report_stage2` ci decide sopra SE l'utente vede la risposta del votante
+    o il messaggio d'errore.
+
+    Condivide il marcatore con `_collect_failures` qui sotto, ma non e' la stessa
+    condizione e la differenza va detta: su un ranking con `error is None` e
+    `is_valid=False` questa funzione risponde MALFORMED, mentre le due comprehension la'
+    sotto vogliono un `error` valorizzato e non lo metterebbero in nessuna delle due liste.
+    Oggi non capita — `stage2_rankings` scrive sempre un errore accanto a `is_valid=False`
+    — ma un report che stampa `[MALFORMED]` accanto a un `s2_malformed=0/3` sarebbe questo,
+    e chi rifattorizza si fida di cio' che c'e' scritto qui.
+
+    Il letterale invece e' davvero uno solo, e quello era il difetto: due copie di una
+    condizione sono un fastidio, due copie di cui una sola sorvegliata sono una trappola,
+    perche' quella protetta fa sembrare coperto anche il comportamento dell'altra.
+    """
+    if r.error and not r.error.startswith(_REGEX_NO_MATCH):
+        return "FAILED"
+    return "OK" if r.is_valid else "MALFORMED"
+
+
 def _collect_failures(
     s1: list[StageResult], s2: list[RankingResult]
 ) -> tuple[
@@ -236,11 +304,11 @@ def _collect_failures(
     stage2_failed = [
         (chr(65 + i), r.voter, r.error or "")
         for i, r in enumerate(s2)
-        if r.error and "regex_no_match" not in r.error
+        if r.error and not r.error.startswith(_REGEX_NO_MATCH)
     ]
     stage2_malformed = [
         (chr(65 + i), r.voter)
         for i, r in enumerate(s2)
-        if not r.is_valid and (r.error and "regex_no_match" in r.error)
+        if not r.is_valid and (r.error and r.error.startswith(_REGEX_NO_MATCH))
     ]
     return stage1_failed, stage2_failed, stage2_malformed, stage1_truncated
