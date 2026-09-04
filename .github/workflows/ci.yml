@@ -185,6 +185,21 @@ jobs:
       - name: Audit workflows
         run: zizmor .github/workflows/
 
+      # Che ogni cron abbia il suo check su healthchecks.io, che gli slug corrispondano
+      # ai nomi dei file, che le finestre superino il divario MISURATO fra due run, e che
+      # il watcher non abbia acquistato le proprieta' che la sua soppressione zizmor
+      # dichiara impossibili. Niente rete, niente segreti: la API key di healthchecks.io
+      # non entra in questo repository, e lo script e' stdlib-only come tutti gli altri.
+      - name: I check di healthchecks.io corrispondono ai cron
+        run: python scripts/healthchecks.py --self-check
+
+      # E il banco del self-check: ogni suo controllo esercitato su una realta' rotta
+      # apposta, piu' due mutazioni che pretendono il verde quando il controllo e' spento.
+      # Un gate che non e' mai stato visto rosso non e' un gate — e questo banco ha
+      # trovato un buco vero al primo giro, uno step `- uses:` che passava indisturbato.
+      - name: Il banco del self-check di healthchecks
+        run: python scripts/prova_healthchecks.py
+
   sonar:
     name: SonarQube Cloud
     runs-on: ubuntu-latest

@@ -147,32 +147,43 @@ The unit suite still never touches the network — this is the one exception, an
 a schedule instead of in the PR loop so it can never slow down the development cycle.
 
 **And a watcher on the watcher.** A red run on Actions says the sentinel *failed*. Nothing
-*in this repo* says the sentinel never *ran* (something outside it does — see below) — and
-GitHub disables scheduled workflows after 60 days of repository inactivity, silently. The job posts a check-in to a Sentry cron monitor
-(`llm-council-e2e`), the kind of alarm that fires on the **absence** of a signal. The
-check-in never fails the build: a guard that kills what it guards is worse than no guard.
+*in this repo* could say the sentinel never *ran* — and GitHub disables scheduled workflows
+after 60 days of repository inactivity, silently, which is the one failure a red run cannot
+show because it produces nothing to look at.
 
-**Honest limit, re-measured 2026-08-31 — and it is worse than this file used to say.** The
-monitor exists with the right schedule and is **`disabled`**. It has never recorded a single
-check-in. Sentry includes one cron monitor per plan and the seat is held by another project;
-monitors past the quota are registered and left inactive.
+Since **2026-09-04** both scheduled workflows send a heartbeat to **healthchecks.io**, the
+kind of alarm that fires on the **absence** of a signal. One `workflow_run` watcher
+(`.github/workflows/healthchecks.yml`) covers `e2e.yml` *and* `mutation.yml`, filtered to
+`workflow_run.event == 'schedule'` so that a manual dispatch cannot report a dead cron as
+alive. The ping never fails the build: a guard that kills what it guards is worse than no
+guard.
 
-The correction matters because the previous wording — *"receives its check-ins, but it is not
-alerting"* — described something that does not happen. Queried directly: `status: disabled`,
-*"No check-ins found"*, and `ok=0 error=0 missed=0` for the hour of 2026-08-31 in which the
-E2E ran and its own log printed `check-in Sentry: error`. **The check-in is sent and thrown
-away.** Not instrumented-but-silent: not instrumented.
+**Windows come from the measured gap, not from the cron expression.** Read from the GitHub
+API on 2026-09-04: `e2e` max 174.0h over 6 samples, `mutation` 178.1h over 4 — hence 7 days
++ 24h and 7 days + 36h. An alarm sized on the schedule fires on a normal GitHub delay, and a
+monitor people learn to ignore is not a monitor. The table lives in
+`scripts/healthchecks.py`, whose `--self-check` runs on every PR: it asserts that every
+scheduled workflow has a check, that slugs match filenames, that the windows clear the
+measured gap, and that the watcher still has the shape its zizmor suppression claims. Its
+bench, `scripts/prova_healthchecks.py`, exercises each of those on a deliberately broken copy
+and demands the red — twenty cases, two of which demand the *green* back when the control is
+switched off.
 
-**The missed-run case is guarded anyway — from outside this repo.** Since 2026-08-14,
+**What it replaced, and why the replacement was not optional.** Until 2026-09-04 `e2e.yml`
+posted a check-in to a Sentry cron monitor (`llm-council-e2e`). Re-measured 2026-08-31 and
+again on 2026-09-04: that monitor was **`disabled`** and had **never** recorded a check-in —
+Sentry includes one cron monitor per plan and the seat is held by another project. The
+check-in was sent and thrown away, while the job log printed `check-in Sentry: ok`. Not
+instrumented-but-silent: not instrumented, and looking instrumented. `mutation.yml`, for its
+part, had no guard at all. Both facts were found by querying the services instead of reading
+this file, which is the only way that class of drift ever surfaces.
+
+**The missed-run case has a second net, from outside this repo.** Since 2026-08-14,
 `scripts/sentinella-cron.mjs` in the site repo (workflow `sentinella-cron.yml`, daily) asks
 the GitHub API when each schedule last fired and, for whichever one has gone quiet, raises a
 Sentry event, fails its own run, and opens a GitHub issue — in the site repo, since the token
 is scoped there. `llm-council-e2e` is one of its entries, with a 10-day limit against a weekly
-schedule. It lives there because that repo commits on 13 days out of the last 31, never close
-to GitHub's 60-day cutoff, while this one goes in sprints: a guard that dies of the disease it
-watches for is no guard. That guard is in turn watched, by reciprocal coverage inside the site
-repo. The dead check-in above is a **second** net, kept because it costs nothing and works by
-itself the day the seat frees up.
+schedule; `mutation.yml` is not.
 
 Its honest limit, so this paragraph does not repeat the mistake it corrects: that guard is
 fail-open by construction. A GitHub API error for one entry is skipped with a warning and no
@@ -261,9 +272,13 @@ Still deliberately absent: **SBOM and signed attestation**. Nothing is published
 artifact is distributed — an SBOM would list the empty set and a signature would sign it.
 A motivated Level 1 is professional; a cargo-cult Level 4 is theatre.
 
-Also absent: **OIDC**. There is no cloud to authenticate to. The three secrets this repo holds
-(`OPENROUTER_API_KEY`, `SONAR_TOKEN`, `SENTRY_CRON_CHECKIN_URL`) are third-party credentials
-with no federation available.
+Also absent: **OIDC**. There is no cloud to authenticate to. The secrets this repo holds
+(`OPENROUTER_API_KEY`, `SONAR_TOKEN`, `HEALTHCHECKS_PING_KEY`, and the three `LANGFUSE_*`)
+are third-party credentials with no federation available. `SENTRY_CRON_CHECKIN_URL` was
+deleted on 2026-09-04 with the step that read it: a live secret nobody reads is attack
+surface with nothing on the other side of the trade. The healthchecks.io **API key**, which
+could widen a grace window until the alarm goes blind, deliberately never enters this
+repository — it lives only in Doppler, and no CI step calls `--apply`.
 
 ## Security hardening
 

@@ -164,64 +164,17 @@ jobs:
           LANGFUSE_BASE_URL: ${{ secrets.LANGFUSE_BASE_URL }}
         run: python scripts/langfuse_check.py council.stderr
 
-      # Check-in del cron monitor Sentry (slug: llm-council-e2e).
+      # IL DEAD MAN'S SWITCH DI QUESTO CRON NON VIVE PIU' QUI.
       #
-      # ATTENZIONE, misurato il 2026-08-31: quel monitor e' `disabled` e non ha MAI
-      # registrato un check-in. Piano gratuito, un monitor attivo per account, posto
-      # occupato da un altro progetto. Questo step spedisce e Sentry butta: nella fascia
-      # oraria in cui la E2E ha girato oggi, `ok=0 error=0 missed=0`. Tutto il ragionamento
-      # qui sotto descrive quindi un guardiano CHE NON GIRA — resta perche' e' giusto e
-      # perche' il giorno che il posto si libera funziona da solo.
+      # Fino al 2026-09-04 questo punto ospitava un check-in a un cron monitor Sentry
+      # (slug `llm-council-e2e`) che era `disabled` e non aveva MAI ricevuto un battito:
+      # piano gratuito, un monitor attivo per account, posto occupato da un altro
+      # progetto. Lo step spediva e Sentry buttava, mentre il log stampava
+      # `check-in Sentry: ok` — una lampada collegata a niente, lo stesso difetto gia'
+      # pagato con `langfuse_opt_in`.
       #
-      # Il caso "non e' partita affatto" e' pero' coperto da FUORI, dal 14-08: nel repo
-      # del sito, `scripts/sentinella-cron.mjs` (workflow `sentinella-cron.yml`, giornaliero)
-      # interroga l'API GitHub e, se lo schedule `llm-council-e2e` tace da piu' di 10 giorni,
-      # manda un evento Sentry, fa fallire la propria run e apre una issue NEL REPO DEL SITO
-      # (il token vale solo la'). Vive la' perche' quel repo committa 13 giorni su 31, lontano
-      # dalla soglia GitHub dei 60, mentre questo va a sprint: una guardia che muore dello
-      # stesso male che sorveglia non serve a niente. Quindi questo step e' una SECONDA rete.
-      #
-      # Anche quella guardia e' fail-open, e va detto: un errore dell'API GitHub su una voce
-      # viene saltato con un warning e nessun allarme, senza DSN la chiamata a Sentry e' un
-      # no-op, e il percorso d'allarme non e' mai scattato in produzione — solo nel self-check.
-      #
-      # Cio' che nessuno sorveglia e' l'altro caso: partita e FALLITA. Lo dice solo il rosso
-      # su Actions, che va guardato a mano — e dal 24/08 al 31/08 e' stato rosso una
-      # settimana senza che nessuno guardasse.
-      #
-      # Il job rosso su Actions segnala che la sentinella e' FALLITA. Un cron monitor si
-      # allarma invece sull'ASSENZA del check-in — e GitHub disabilita gli schedule dopo
-      # 60 giorni di inattivita' sul repo, in silenzio: e' il caso che nessun rosso puo'
-      # mostrare, perche' non produce niente da vedere.
-      #
-      # `monitor_config` fa l'upsert: il monitor nasce da solo al primo check-in, e
-      # la sua schedule sta qui accanto a quella vera sopra — se un giorno cambia il
-      # cron si cambiano insieme, o Sentry grida "missed" ogni settimana.
-      #
-      # L'URL completo (progetto + chiave + slug) sta in un secret, non nel file:
-      # il repo e' pubblico e un URL di check-in leggibile da chiunque permette di
-      # spedire uno stato `ok` falso, che maschererebbe proprio la run mancata che
-      # questo monitor esiste per vedere.
-      #
-      # `exit 0` finale NON e' pigrizia: questo step sorveglia la sentinella, non e'
-      # la sentinella. Se Sentry e' giu' o il secret manca, il verdetto sul council
-      # resta quello dello step sopra — un guardiano che uccide cio' che sorveglia
-      # e' peggio di nessun guardiano.
-      - name: Check-in Sentry (la sentinella e' viva)
-        if: always()
-        env:
-          ESITO: ${{ job.status }}
-          CHECKIN_URL: ${{ secrets.SENTRY_CRON_CHECKIN_URL }}
-        run: |
-          if [ -z "$CHECKIN_URL" ]; then
-            echo "::warning::SENTRY_CRON_CHECKIN_URL assente — check-in saltato"
-            exit 0
-          fi
-          stato=ok
-          [ "$ESITO" = "success" ] || stato=error
-          curl -sS -m 10 -X POST "$CHECKIN_URL" \
-            -H 'Content-Type: application/json' \
-            -d "{\"monitor_config\":{\"schedule\":{\"type\":\"crontab\",\"value\":\"0 6 * * 1\"},\"timezone\":\"UTC\",\"checkin_margin\":60,\"max_runtime\":30},\"status\":\"$stato\"}" \
-            && echo "check-in Sentry: $stato" \
-            || echo "check-in Sentry non riuscito — il verdetto sul council resta valido"
-          exit 0
+      # Ora il battito lo manda `.github/workflows/healthchecks.yml`, da fuori questo
+      # file e per ENTRAMBI i cron del repository: `workflow_run` conosce l'esito del
+      # WORKFLOW, che un job non puo' sapere di se stesso, e `mutation.yml` non era
+      # sorvegliato da niente. Le finestre stanno in `scripts/healthchecks.py`, misurate
+      # sul divario reale fra due run schedulate e non sull'espressione cron.

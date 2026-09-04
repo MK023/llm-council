@@ -1,0 +1,150 @@
+name: battito
+
+# Il dead man's switch dei due cron di questo repository.
+#
+# COSA VEDE CHE NESSUN ALTRO VEDE. Ogni controllo che esiste qui guarda run che
+# FINISCONO: un cron che non parte affatto non produce nessun evento, quindi non
+# produce nessun rosso da guardare. Qui il segnale e' invertito — healthchecks.io si
+# aspetta un battito entro una finestra, e se non arriva e' LUI a parlare, da fuori.
+# GitHub disabilita gli schedule dopo 60 giorni di inattivita' del repository, in
+# silenzio, e questo repository va a sprint: e' il caso che nessun rosso puo' mostrare,
+# perche' non produce niente da vedere.
+#
+# COSA SOSTITUISCE. Fino al 2026-09-04 `e2e.yml` spediva un check-in a un cron monitor
+# Sentry (`llm-council-e2e`) che era `disabled` e non aveva MAI ricevuto un battito:
+# piano gratuito, un monitor attivo per account, posto occupato da un altro progetto.
+# Lo step stampava `check-in Sentry: ok` mentre il monitor era spento — una lampada
+# collegata a niente, lo stesso difetto che questo repo aveva gia' pagato con
+# `langfuse_opt_in`. Quello step e' stato rimosso: due guardiani sullo stesso cron, di
+# cui uno morto, sono peggio di uno solo. `mutation.yml` invece non era sorvegliato da
+# niente, ne' da Sentry ne' dalla sentinella esterna nel repo del sito.
+#
+# PERCHE' UN WATCHER INVECE DI DUE MODIFICHE. Un ping messo dentro un job direbbe "quel
+# job e' andato", non "il cron e' partito", e l'esito che serve e' quello del WORKFLOW,
+# che esiste solo qui. In piu' i due file sorvegliati non si toccano, quindi questa
+# aggiunta non puo' far regredire cio' che gia' funziona.
+#
+# IL FILTRO SULLO SCHEDULE E' IL DISEGNO, NON UN DETTAGLIO. `workflow_run` scatta per
+# OGNI trigger: senza `workflow_run.event == 'schedule'` un `workflow_dispatch` lanciato
+# a mano manderebbe un battito e il monitor direbbe "vivo" per un cron che non parte
+# piu' da solo. E' il modo di fallire piu' insidioso di questo file, perche' lascia il
+# verde. Lo pretende `scripts/healthchecks.py --self-check`, in ci.yml.
+#
+# LO SLUG E' IL NOME DEL FILE senza estensione. La convenzione la verifica il
+# self-check: se i due divergono il ping finisce su un check inesistente e healthchecks
+# risponde 404 senza che nessuno guardi.
+
+# SOPPRESSIONE ZIZMOR, argomentata perche' resta.
+#
+# `workflow_run` e' segnalato HIGH per categoria (`dangerous-triggers`): gira sul ramo
+# di default CON i segreti, svegliato da workflow che possono essere partiti da una PR
+# di un fork. L'exploit noto e' in tre passi — la PR del fork produce un artefatto, il
+# workflow privilegiato lo scarica, lo esegue con le nostre credenziali.
+#
+# Nessuno dei tre passi esiste qui: niente `checkout`, niente artefatti, niente `uses:`
+# di nessun tipo, `permissions: {}` in cima E sul job, e il filtro sullo schedule
+# esclude per costruzione tutto cio' che nasce da una PR. Questo repository e' PUBBLICO,
+# quindi il caso del fork non e' teorico. L'unico segreto presente e' la ping key, che
+# sa solo dire "sono vivo". La API key, che potrebbe allungare un grace fino a rendere
+# cieco l'allarme, non entra mai in questo repository: `--apply` lo lancia una persona
+# da Doppler.
+#
+# La riga sotto spegne l'audit; `forma_watcher()` in scripts/healthchecks.py pretende
+# che quelle proprieta' siano ancora vere a ogni PR. Una promessa scritta e una
+# sorvegliata sembrano uguali sulla pagina.
+on: # zizmor: ignore[dangerous-triggers]
+  workflow_run:
+    workflows:
+      - E2E settimanale
+      - Mutation testing
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  # Un gruppo PER RUN, non per workflow. `cancel-in-progress: false` protegge solo il
+  # battito in esecuzione: GitHub cancella comunque quello IN CODA quando ne arriva uno
+  # piu' recente nello stesso gruppo. Con il gruppo sul solo nome bastava che una run
+  # schedulata e una lanciata a mano finissero vicine — la seconda cancellava il battito
+  # in coda della prima e poi veniva saltata dal filtro sullo schedule. Nessun ping,
+  # divario raddoppiato, allarme falso contro una finestra dimensionata sul divario
+  # singolo: il difetto esatto che il commento precedente diceva di evitare. Trovato da
+  # una revisione del 2026-09-04.
+  group: battito-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  battito:
+    name: Battito del cron
+    if: github.event.workflow_run.event == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # I dati dell'evento passano SOLO da `env`, mai interpolati dentro `run:`: il path
+      # arriva dall'evento e dentro uno script diventerebbe iniezione. E' lo stesso
+      # schema che `e2e.yml` e `probe.yml` usano per il testo scritto dai modelli.
+      - name: Ping
+        env:
+          PERCORSO: ${{ github.event.workflow_run.path }}
+          ESITO: ${{ github.event.workflow_run.conclusion }}
+          PING_KEY: ${{ secrets.HEALTHCHECKS_PING_KEY }}
+        run: |
+          set -euo pipefail
+          # ENTRAMBE le estensioni, e non e' pedanteria: GitHub accetta `.yml` e
+          # `.yaml`, e togliere solo `.yml` avrebbe fatto pingare
+          # `hc-ping.com/<key>/backup.yaml` per un check di nome `backup`. Risposta 404
+          # — cioe' un ::warning:: e il job VERDE — mentre il check non riceve mai un
+          # battito e allarma per sempre.
+          slug=$(basename "$PERCORSO")
+          slug=${slug%.yml}
+          slug=${slug%.yaml}
+
+          # `set -u` NON intercetta una variabile definita ma vuota, ed e' proprio il
+          # caso di un secret assente: l'URL diventerebbe `hc-ping.com//<slug>` e
+          # healthchecks risponderebbe 404 — lo stesso codice che sotto significa "il
+          # check non esiste", con una diagnosi che manda a lanciare `--apply`, cosa che
+          # non risolverebbe niente. Un guardiano senza chiave non e' un guardiano.
+          if [ -z "$PING_KEY" ]; then
+            echo "::error::HEALTHCHECKS_PING_KEY assente o vuoto: nessun battito puo' partire"
+            exit 1
+          fi
+
+          # IL BATTITO DICE "LO SCHEDULE E' PARTITO", non "la run e' andata bene".
+          # Questo e' un dead man's switch: cio' che sorveglia e' l'ASSENZA di run.
+          # Quindi OGNI esito manda un battito, e solo un guasto vero lo manda su
+          # /fail. Mettere `cancelled` e `skipped` sul ramo "niente battito" sarebbe un
+          # difetto misurabile: healthchecks misura il divario fra due PING, mentre le
+          # finestre in healthchecks.py sono dimensionate sul divario fra due RUN — un
+          # solo battito saltato raddoppia il divario e fa suonare un allarme falso.
+          #
+          # Chi dice QUALE gate e' rosso resta il rosso su Actions. Qui un /fail serve
+          # solo a non lasciare verde un check il cui cron gira e fallisce — il caso
+          # che dal 24 al 31 agosto 2026 e' rimasto rosso una settimana senza che
+          # nessuno guardasse.
+          case "$ESITO" in
+            failure|timed_out|startup_failure) coda="/fail" ;;
+            *) coda="" ;;
+          esac
+
+          # `|| true`: questo step SORVEGLIA i cron, non li esegue. Se healthchecks.io
+          # e' giu' il battito si perde, ma un guardiano che colora di rosso una run
+          # riuscita e' peggio di nessun guardiano — la stessa ragione per cui il
+          # check-in che questo step sostituisce chiudeva con `exit 0`. Il codice `000`
+          # lo scrive gia' `-w '%{http_code}'` da solo.
+          codice=$(curl --connect-timeout 5 -m 10 --retry 5 --retry-all-errors -sS \
+            -o /dev/null -w '%{http_code}' \
+            "https://hc-ping.com/${PING_KEY}/${slug}${coda}" || true)
+          echo "$slug$coda -> HTTP $codice"
+
+          # Il 404 va detto. Significa che il check non esiste ancora, cioe' che
+          # `--apply` non e' mai stato lanciato: senza questo avviso ogni battito
+          # cadrebbe nel vuoto e il sistema resterebbe verde e inerte — il modo di
+          # fallire peggiore per un dead man's switch, perche' non si vede. E' anche
+          # esattamente cio' che il check-in Sentry faceva da tre settimane.
+          case "$codice" in
+            2*) ;;
+            404) echo "::warning::$slug: il check non esiste su healthchecks.io, lancia scripts/healthchecks.py --apply" ;;
+            409) echo "::warning::$slug: slug ambiguo su healthchecks.io, due check rispondono allo stesso nome" ;;
+            *) echo "::warning::$slug: battito non recapitato (HTTP $codice)" ;;
+          esac
